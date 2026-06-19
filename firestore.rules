@@ -14,10 +14,22 @@ service cloud.firestore {
     function existing() { return resource.data; }
     function isSignedIn() { return request.auth != null; }
     
+    // Structured validation function for campaign settings
+    function isValidCampaign(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && (data.setting == null || (data.setting is string && data.setting.size() <= 1000))
+        && (data.description == null || (data.description is string && data.description.size() <= 5000))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // Structured validation function for game sessions
     function isValidSession(data) {
       return data.id is string && data.id.size() <= 128
         && data.userId is string && data.userId.size() <= 128
+        && data.campaignId is string && data.campaignId.size() <= 128
         && data.title is string && data.title.size() <= 200
         && data.date is string && data.date.size() <= 50
         && (data.notes == null || (data.notes is string && data.notes.size() <= 1000000))
@@ -31,6 +43,31 @@ service cloud.firestore {
         && (data.characters == null || data.characters is list)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
+    }
+
+    // Rules for Campaign folders
+    match /campaigns/{campaignId} {
+      allow read, list: if isSignedIn() && existing().userId == request.auth.uid;
+      
+      allow create: if isSignedIn()
+        && isValidId(campaignId)
+        && incoming().id == campaignId
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isValidCampaign(incoming());
+        
+      allow update: if isSignedIn()
+        && existing().userId == request.auth.uid
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isValidCampaign(incoming())
+        && (
+          incoming().diff(existing()).affectedKeys().hasAny(['name', 'setting', 'description', 'updatedAt'])
+        );
+        
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
     }
 
     // Rules for individual Dungeon Master sessions
@@ -52,7 +89,7 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && isValidSession(incoming())
         && (
-          incoming().diff(existing()).affectedKeys().hasAny(['title', 'date', 'notes', 'audioUrl', 'audioTranscription', 'summary', 'videoUrl', 'videoOperationName', 'videoStatus', 'highlights', 'characters', 'updatedAt'])
+          incoming().diff(existing()).affectedKeys().hasAny(['title', 'date', 'notes', 'audioUrl', 'audioTranscription', 'summary', 'videoUrl', 'videoOperationName', 'videoStatus', 'highlights', 'characters', 'campaignId', 'updatedAt'])
         );
         
       allow delete: if isSignedIn() && existing().userId == request.auth.uid;
