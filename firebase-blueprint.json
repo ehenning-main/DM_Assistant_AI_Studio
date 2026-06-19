@@ -1,0 +1,73 @@
+{
+  "entities": {
+    "Session": {
+      "title": "Session",
+      "description": "Dungeon Master game session containing raw notes, audio recordings, summarizations, visual highlights, and video links.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique session ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "UID of the owner/Dungeon Master"
+        },
+        "title": {
+          "type": "string",
+          "description": "Session title or campaign name"
+        },
+        "date": {
+          "type": "string",
+          "description": "The date when the session occurred"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Dungeon Master's written session notes"
+        },
+        "audioUrl": {
+          "type": "string",
+          "description": "Link to recorded audio session or audio note, if any"
+        },
+        "summary": {
+          "type": "string",
+          "description": "AI-generated summary and bulleted key points"
+        },
+        "videoUrl": {
+          "type": "string",
+          "description": "Url to the short Veo-generated video"
+        },
+        "videoOperationName": {
+          "type": "string",
+          "description": "Operation path for polling the Veo generation"
+        },
+        "videoStatus": {
+          "type": "string",
+          "description": "Veo generation status: idle, generating, done, or error",
+          "enum": ["idle", "generating", "done", "error"]
+        },
+        "highlights": {
+          "type": "array",
+          "description": "An array of highlight items, each with an image URL and a brief caption description"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server-side creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server-side last updated timestamp"
+        }
+      },
+      "required": ["id", "userId", "title", "date", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "sessions/{sessionId}": {
+      "schema": "Session",
+      "description": "Collection of Dungeon Master game sessions, scoped by owner ID"
+    }
+  }
+}

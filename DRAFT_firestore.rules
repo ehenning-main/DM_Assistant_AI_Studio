@@ -1,0 +1,59 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny gate
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Core validator primitives
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+    
+    // Structured validation function for game sessions
+    function isValidSession(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.title is string && data.title.size() <= 200
+        && data.date is string && data.date.size() <= 50
+        && (data.notes == null || (data.notes is string && data.notes.size() <= 1000000))
+        && (data.audioUrl == null || (data.audioUrl is string && data.audioUrl.size() <= 2000))
+        && (data.summary == null || (data.summary is string && data.summary.size() <= 100000))
+        && (data.videoUrl == null || (data.videoUrl is string && data.videoUrl.size() <= 2000))
+        && (data.videoOperationName == null || (data.videoOperationName is string && data.videoOperationName.size() <= 1000))
+        && (data.videoStatus == null || (data.videoStatus is string && data.videoStatus.size() <= 50))
+        && (data.highlights == null || data.highlights is list)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Rules for individual Dungeon Master sessions
+    match /sessions/{sessionId} {
+      allow read, list: if isSignedIn() && existing().userId == request.auth.uid;
+      
+      allow create: if isSignedIn() 
+        && isValidId(sessionId)
+        && incoming().id == sessionId
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isValidSession(incoming());
+        
+      allow update: if isSignedIn()
+        && existing().userId == request.auth.uid
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isValidSession(incoming())
+        && (
+          incoming().diff(existing()).affectedKeys().hasAny(['title', 'date', 'notes', 'audioUrl', 'summary', 'videoUrl', 'videoOperationName', 'videoStatus', 'highlights', 'updatedAt'])
+        );
+        
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+  }
+}
