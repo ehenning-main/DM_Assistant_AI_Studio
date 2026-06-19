@@ -81,9 +81,10 @@ export async function updateExistingSession(session: Session): Promise<void> {
     const path = `sessions/${session.id}`;
     try {
       const docRef = doc(db, "sessions", session.id);
-      // Ensure we preserve the original createdAt
+      // Ensure we preserve the original createdAt of type timestamp by omitting it from the string-based payload
+      const { createdAt, ...updatedFields } = session;
       await setDoc(docRef, {
-        ...session,
+        ...updatedFields,
         updatedAt: serverTimestamp(),
       }, { merge: true });
     } catch (error) {
