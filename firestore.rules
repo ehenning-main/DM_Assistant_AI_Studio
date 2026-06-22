@@ -28,7 +28,8 @@ service cloud.firestore {
         && data.userId is string && data.userId.size() <= 128
         && data.campaignId is string && data.campaignId.size() <= 128
         && data.title is string && data.title.size() <= 200
-        && data.date is string && data.date.size() <= 50;
+        && data.date is string && data.date.size() <= 50
+        && (!("playerNotes" in data) || data.playerNotes == null || (data.playerNotes is string && data.playerNotes.size() <= 100000));
     }
 
     // Rules for Campaign folders
@@ -75,7 +76,7 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && isValidSession(incoming())
         && (
-          incoming().diff(resource.data).affectedKeys().hasAny(['title', 'date', 'notes', 'audioUrl', 'audioTranscription', 'summary', 'videoUrl', 'videoOperationName', 'videoStatus', 'highlights', 'characters', 'campaignId', 'updatedAt'])
+          incoming().diff(resource.data).affectedKeys().hasAny(['title', 'date', 'notes', 'playerNotes', 'audioUrl', 'audioTranscription', 'summary', 'videoUrl', 'videoOperationName', 'videoStatus', 'highlights', 'characters', 'campaignId', 'updatedAt'])
         );
         
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;

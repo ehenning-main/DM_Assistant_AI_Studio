@@ -116,6 +116,54 @@ Compile your response utilizing beautiful clean Markdown formatting with the fol
   }
 });
 
+// Extra: Extract Cinematic Art & Video prompts from Chronicle Summary
+app.post("/api/extract-media-prompts", async (req, res) => {
+  try {
+    const { summary } = req.body;
+    if (!summary) {
+      res.status(400).json({ error: "Missing campaign summary for media analysis." });
+      return;
+    }
+
+    const extractionPrompt = `
+You are a master cinematic RPG visual director. Analyze the following Campaign Chronicle Summary and devise:
+1. Two to Three (2-3) separate, highly descriptive fantasy illustration prompt concepts. Each concept should represent a critical and visually impactful moment, boss encounter, legendary loot, or scenic dungeon backdrop mentioned in the summary.
+2. One (1) separate dramatic video prompt concept that describes direct visual motion, camera angles, and atmospheric conditions style, suitable for a cinematic camera or video generator.
+
+The prompts must be highly detailed, immersive, and styled for dark fantasy concept art. Keep the wording rich but highly physical for an image/video generator.
+
+You must respond with valid string arrays in the exact following JSON format:
+{
+  "imagePrompts": [
+    "highly detailed description of visual moment #1",
+    "highly detailed description of visual moment #2",
+    "highly detailed description of visual moment #3"
+  ],
+  "videoPrompt": "highly detailed dramatic motion camera direction video concept"
+}
+Do not include any wordy explanations or markdown backticks around the JSON. Return only the raw JSON.
+`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: [
+        { text: summary },
+        { text: extractionPrompt }
+      ],
+      config: {
+        responseMimeType: "application/json",
+      },
+    });
+
+    const cleanText = (response.text || "{}").trim().replace(/^```json/, "").replace(/```$/, "").trim();
+    const parsed = JSON.parse(cleanText);
+    res.json(parsed);
+  } catch (error: any) {
+    console.error("Error extracting media prompts:", error);
+    res.status(400).json({ error: error.message || "Failed to extract highlights prompts." });
+  }
+});
+
 // 3. Highlight Static Image Generation
 app.post("/api/generate-highlight", async (req, res) => {
   try {

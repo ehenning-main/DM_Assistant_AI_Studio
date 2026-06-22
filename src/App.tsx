@@ -11,6 +11,7 @@ import {
   Lock,
   Globe,
   User,
+  Users,
   LogOut,
   ChevronRight,
   ShieldAlert,
@@ -41,6 +42,7 @@ import { AudioRecorder } from "./components/AudioRecorder";
 import { HighlightSection } from "./components/HighlightSection";
 import { VideoSection } from "./components/VideoSection";
 import { CharacterTracker } from "./components/CharacterTracker";
+import { MediaForgeWizard } from "./components/MediaForgeWizard";
 
 export default function App() {
   // Authentication & Isomorphic engine states
@@ -64,6 +66,10 @@ export default function App() {
   const [editCampaignSetting, setEditCampaignSetting] = useState("");
   const [editCampaignDesc, setEditCampaignDesc] = useState("");
 
+  // UI-based Delete Confirmation states
+  const [campaignToDelete, setCampaignToDelete] = useState<Campaign | null>(null);
+  const [sessionToDelete, setSessionToDelete] = useState<Session | null>(null);
+
   // Campaign session collections
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
@@ -71,10 +77,12 @@ export default function App() {
 
   // Editor notepad controllers
   const [notes, setNotes] = useState("");
+  const [playerNotes, setPlayerNotes] = useState("");
   const [sessionTitle, setSessionTitle] = useState("");
   const [sessionDate, setSessionDate] = useState("");
   const [audioTranscription, setAudioTranscription] = useState("");
   const [notesSaving, setNotesSaving] = useState(false);
+  const [activeNoteTab, setActiveNoteTab] = useState<"dm" | "player">("dm");
 
   // Creation forms states
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -146,7 +154,8 @@ export default function App() {
       setCampaigns(campaignList);
       
       // Select appropriate campaign
-      const campId = targetCampaignId || selectedCampaignId || campaignList[0]?.id || "";
+      const campExists = campaignList.some((c) => c.id === selectedCampaignId);
+      const campId = targetCampaignId || (campExists ? selectedCampaignId : "") || campaignList[0]?.id || "";
       setSelectedCampaignId(campId);
       
       // 2. Fetch sessions
@@ -164,6 +173,7 @@ export default function App() {
         setSessionTitle(nextActive.title);
         setSessionDate(nextActive.date);
         setNotes(nextActive.notes);
+        setPlayerNotes(nextActive.playerNotes || "");
         setAudioTranscription(nextActive.audioTranscription || "");
       } else {
         setSelectedSession(null);
@@ -187,6 +197,7 @@ export default function App() {
       setSessionTitle(nextActive.title);
       setSessionDate(nextActive.date);
       setNotes(nextActive.notes);
+      setPlayerNotes(nextActive.playerNotes || "");
       setAudioTranscription(nextActive.audioTranscription || "");
     } else {
       setSelectedSession(null);
@@ -245,19 +256,24 @@ export default function App() {
   }
 
   // Action: Destroy the campaign world and all child chapters
-  async function handleDeleteCampaign(campId: string) {
+  function handleDeleteCampaign(campId: string) {
     if (!campId || !activeUserId) return;
     const campObj = campaigns.find((c) => c.id === campId);
     if (!campObj) return;
+    setCampaignToDelete(campObj);
+  }
 
-    const accept = confirm(`Are you sure you want to permanently erase the entire campaign setting "${campObj.name}" and ALL of its associated sessions?\n\nWARNING: THIS ACTION CANNOT BE UNDONE!`);
-    if (!accept) return;
-
+  // Actual execution of campaign deletion on custom modal confirmation
+  async function confirmDeleteCampaign() {
+    if (!campaignToDelete || !activeUserId) return;
+    const campId = campaignToDelete.id;
     try {
       await removeCampaign(campId, activeUserId);
+      setCampaignToDelete(null);
       await loadCampaignsAndSessions();
-    } catch (e) {
+    } catch (e: any) {
       console.error("Campaign purging anomaly:", e);
+      alert(`Could not delete campaign: ${e.message || e}`);
     }
   }
 
@@ -287,6 +303,7 @@ export default function App() {
       title: newTitle.trim(),
       date: newDate,
       notes: "## 📒 DM RAW LOGS\n\n- The adventure begins...\n- Write combat logs or encounter details here.",
+      playerNotes: "## 👥 PLAYER JOURNAL\n\n- Key characters met...\n- Unresolved quests / rumors...\n- Shared party loot...",
       highlights: [],
       characters: [],
       videoStatus: "idle",
@@ -317,6 +334,7 @@ export default function App() {
       title: sessionTitle,
       date: sessionDate,
       notes: notes,
+      playerNotes: playerNotes,
       audioTranscription: audioTranscription,
       updatedAt: new Date().toISOString(),
     };
@@ -337,30 +355,48 @@ export default function App() {
   }
 
   // Action: Delete full session chapter
-  async function handleDeleteSession(id: string) {
+  function handleDeleteSession(id: string) {
     if (!id || !activeUserId) return;
-    const accept = confirm("Are you sure you want to permanently delete this session from your chronicles? This cannot be undone.");
-    if (!accept) return;
+    const sessObj = sessions.find((s) => s.id === id);
+    if (!sessObj) return;
+    setSessionToDelete(sessObj);
+  }
 
+  // Confirmed Delete Session
+  async function confirmDeleteSession() {
+    if (!sessionToDelete || !activeUserId) return;
+    const sessId = sessionToDelete.id;
     try {
-      await removeSession(id, activeUserId);
+      await removeSession(sessId, activeUserId);
+      setSessionToDelete(null);
       await loadCampaignsAndSessions(selectedCampaignId);
     } catch (e) {
       console.error("Deletion failure:", e);
     }
   }
 
-  // Quick notepad Templates injector for DMs
+  // Quick notepad Templates injector for DMs / Players
   function injectTemplate(templateName: string) {
     let str = "";
-    if (templateName === "combat") {
-      str = "\n\n### ⚔️ COMBAT INITIATIVE TRACKER\n- **Monsters**: Goblins (HP 8, AC 12)\n- **Initiative Order**:\n  1. Rogue Balasar (Roll: 18)\n  2. Goblins (Roll: 12)\n  3. Fighter Galahad (Roll: 9)\n- **Skirmish Ledger**:\n  - Round 1: Rogue sneak attacks Goblin #1 for 12 piercing damage. Defeated.";
-    } else if (templateName === "npc") {
-      str = "\n\n### 👥 IMPROVISED NPC JOURNAL\n- **Name**: Barnaby the Brewer\n- **Role**: Town shopkeeper ally\n- **Disposition**: Friendly but highly paranoid\n- **Bio/Secrets**: Reveals goblins steal grain sacks. Offers 5% tavern discount.";
+    if (activeNoteTab === "player") {
+      if (templateName === "quest") {
+        str = "\n\n### 📜 ACTIVE QUESTS & REMINDERS\n- [ ] **Main Quest**: Retrieve the Shattered Spire Key.\n- [ ] **Side Quest**: Deliver Barnaby's special brew to Glimmerpost.\n- [ ] **Bounty**: Clean up giant spiders in the cellars.";
+      } else if (templateName === "inventory") {
+        str = "\n\n### 🎒 PARTY INVENTORY & FUNDS\n- **Gold (GP)**: 120 gp | **Silver (SP)**: 45 sp\n- **Key Items**: Shattered Spire Map, Baron's Ring of Sigil\n- **Consumables**: 2 Potions of Healing, 1 Elixir of Fire.";
+      } else {
+        str = "\n\n### 💡 MYSTERIES & CAMPAIGN THEORIES\n- **The Gilded Skull**: Spotted near mayor's chambers. Possible doppelganger?\n- **The Spire Gate**: Only opens on celestial eclipses. Next in 3 days.\n- **Strange Sigil**: Engraved on the goblin king's throne.";
+      }
+      setPlayerNotes((prev) => prev + str);
     } else {
-      str = "\n\n### 🪙 LOOT & REWARDS LEDGER\n- **Magic Items Found**: Boots of Elvenkind (requires attunement)\n- **Gemstones Key**: Sapphire gem worth 100 gold pieces\n- **Coin Sacks**: 80 silver pieces, 30 gold coins.";
+      if (templateName === "combat") {
+        str = "\n\n### ⚔️ COMBAT INITIATIVE TRACKER\n- **Monsters**: Goblins (HP 8, AC 12)\n- **Initiative Order**:\n  1. Rogue Balasar (Roll: 18)\n  2. Goblins (Roll: 12)\n  3. Fighter Galahad (Roll: 9)\n- **Skirmish Ledger**:\n  - Round 1: Rogue sneak attacks Goblin #1 for 12 piercing damage. Defeated.";
+      } else if (templateName === "npc") {
+        str = "\n\n### 👥 IMPROVISED NPC JOURNAL\n- **Name**: Barnaby the Brewer\n- **Role**: Town shopkeeper ally\n- **Disposition**: Friendly but highly paranoid\n- **Bio/Secrets**: Reveals goblins steal grain sacks. Offers 5% tavern discount.";
+      } else {
+        str = "\n\n### 🪙 LOOT & REWARDS LEDGER\n- **Magic Items Found**: Boots of Elvenkind (requires attunement)\n- **Gemstones Key**: Sapphire gem worth 100 gold pieces\n- **Coin Sacks**: 80 silver pieces, 30 gold coins.";
+      }
+      setNotes((prev) => prev + str);
     }
-    setNotes((prev) => prev + str);
   }
 
   // Action: Triggers cloud Generative Summary API
@@ -591,19 +627,50 @@ export default function App() {
                 No active realms. Click "+" to spawn!
               </div>
             ) : (
-              <div className="relative">
-                <select
-                  value={selectedCampaignId}
-                  onChange={(e) => handleSelectCampaign(e.target.value)}
-                  className="w-full bg-zinc-950 text-red-400 border border-zinc-800 focus:border-red-500 focus:outline-none rounded py-1.5 px-2 text-xs font-sans font-medium hover:border-zinc-700 transition cursor-pointer"
-                  id="campaign-realm-selector"
-                >
-                  {campaigns.map((c) => (
-                    <option key={c.id} value={c.id} className="bg-zinc-900 text-zinc-100">
-                      🏰 {c.name}
-                    </option>
-                  ))}
-                </select>
+              <div className="flex gap-1.5 items-center">
+                <div className="flex-1 min-w-0">
+                  <select
+                    value={selectedCampaignId}
+                    onChange={(e) => handleSelectCampaign(e.target.value)}
+                    className="w-full bg-zinc-950 text-red-400 border border-zinc-800 focus:border-red-500 focus:outline-none rounded py-1.5 px-2 text-xs font-sans font-medium hover:border-zinc-700 transition cursor-pointer truncate"
+                    id="campaign-realm-selector"
+                  >
+                    {campaigns.map((c) => (
+                      <option key={c.id} value={c.id} className="bg-zinc-900 text-zinc-100">
+                        🏰 {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {(() => {
+                  const activeCamp = campaigns.find((c) => c.id === selectedCampaignId);
+                  if (!activeCamp) return null;
+                  return (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => {
+                          setEditCampaignName(activeCamp.name);
+                          setEditCampaignSetting(activeCamp.setting || "");
+                          setEditCampaignDesc(activeCamp.description || "");
+                          setShowEditCampaignModal(true);
+                        }}
+                        className="p-1.5 bg-zinc-900 hover:bg-zinc-800 hover:text-red-400 text-zinc-400 border border-zinc-800/80 rounded transition cursor-pointer pb-2 pt-2"
+                        title="Edit Campaign Details"
+                        id="btn-sidebar-edit-campaign"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteCampaign(activeCamp.id)}
+                        className="p-1.5 bg-zinc-900 hover:bg-zinc-800 hover:text-red-400 text-zinc-400 border border-zinc-800/80 rounded transition cursor-pointer pb-2 pt-2"
+                        title="Delete Campaign Realm"
+                        id="btn-sidebar-delete-campaign"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
@@ -646,6 +713,7 @@ export default function App() {
                       setSessionTitle(item.title);
                       setSessionDate(item.date);
                       setNotes(item.notes);
+                      setPlayerNotes(item.playerNotes || "");
                       setAudioTranscription(item.audioTranscription || "");
                     }}
                     className={`group w-full p-3.5 text-left rounded border transition flex items-center justify-between cursor-pointer ${
@@ -719,7 +787,7 @@ export default function App() {
                     className="px-3 py-1.5 bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-red-400 hover:text-red-300 rounded text-[11px] font-sans font-bold transition flex items-center gap-1"
                     id="btn-edit-lore"
                   >
-                    <Edit className="w-3 h-3" /> Lore Details
+                    <Edit className="w-3 h-3" /> Edit Campaign
                   </button>
                   <button
                     onClick={() => handleDeleteCampaign(activeCamp.id)}
@@ -817,52 +885,116 @@ export default function App() {
                   {/* Left panel: Raw written notes */}
                   <div className="space-y-4 p-5 bg-zinc-900 border border-zinc-800 rounded-lg parchment-glow flex flex-col justify-between">
                     <div className="space-y-3">
-                      <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+                      {/* Tabs Header inside the Notes Box */}
+                      <div className="flex border-b border-zinc-800 font-sans text-xs uppercase tracking-wider mb-2">
+                        <button
+                          onClick={() => setActiveNoteTab("dm")}
+                          className={`flex-1 px-3 py-2 text-center border-b-2 font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                            activeNoteTab === "dm"
+                              ? "border-red-500 text-red-100 font-bold bg-zinc-950/20"
+                              : "border-transparent text-zinc-500 hover:text-zinc-300"
+                          }`}
+                          id="btn-tab-dm"
+                        >
+                          <BookOpen className="w-3.5 h-3.5" /> DM Scribe Logs
+                        </button>
+                        <button
+                          onClick={() => setActiveNoteTab("player")}
+                          className={`flex-1 px-3 py-2 text-center border-b-2 font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                            activeNoteTab === "player"
+                              ? "border-amber-500 text-amber-100 font-bold bg-zinc-950/20"
+                              : "border-transparent text-zinc-500 hover:text-zinc-300"
+                          }`}
+                          id="btn-tab-players"
+                        >
+                          <Users className="w-3.5 h-3.5" /> Player Journal
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between border-b border-zinc-850 pb-2">
                         <div className="flex items-center gap-2">
-                          <Edit className="w-5 h-5 text-red-500 animate-pulse" />
-                          <h3 className="font-fantasy font-semibold text-zinc-100 tracking-wider text-base uppercase">
-                            Adventure Log & Scribe Ledger
+                          <Edit className="w-4 h-4 text-red-500 animate-pulse" />
+                          <h3 className="font-fantasy font-semibold text-zinc-100 tracking-wider text-sm uppercase">
+                            {activeNoteTab === "dm" ? "DM Adventure Scribe Ledger" : "Players' Campaign Chronicles"}
                           </h3>
                         </div>
-                        <span className="font-mono text-[10px] text-zinc-500">
+                        <span className="font-mono text-[9px] text-zinc-500">
                           Supports Markdown markup
                         </span>
                       </div>
 
-                      {/* Fast templates injection toolbar */}
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[10px] text-zinc-400 font-mono">Inject template:</span>
-                        <button
-                          onClick={() => injectTemplate("combat")}
-                          className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-red-500 hover:text-red-400 rounded transition cursor-pointer"
-                          id="btn-template-combat"
-                        >
-                          ⚔️ Combat Tracker
-                        </button>
-                        <button
-                          onClick={() => injectTemplate("npc")}
-                          className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-red-500 hover:text-red-400 rounded transition cursor-pointer"
-                          id="btn-template-npc"
-                        >
-                          👤 Improv NPC
-                        </button>
-                        <button
-                          onClick={() => injectTemplate("loot")}
-                          className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-red-500 hover:text-red-400 rounded transition cursor-pointer"
-                          id="btn-template-loot"
-                        >
-                          🪙 Gold / Magic Loot
-                        </button>
-                      </div>
+                      {/* Fast templates injection toolbar based on active tab */}
+                      {activeNoteTab === "dm" ? (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] text-zinc-400 font-mono">Inject DM template:</span>
+                          <button
+                            onClick={() => injectTemplate("combat")}
+                            className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-red-500 hover:text-red-400 rounded transition cursor-pointer"
+                            id="btn-template-combat"
+                          >
+                            ⚔️ Combat Tracker
+                          </button>
+                          <button
+                            onClick={() => injectTemplate("npc")}
+                            className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-red-500 hover:text-red-400 rounded transition cursor-pointer"
+                            id="btn-template-npc"
+                          >
+                            👤 Improv NPC
+                          </button>
+                          <button
+                            onClick={() => injectTemplate("loot")}
+                            className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-red-500 hover:text-red-400 rounded transition cursor-pointer"
+                            id="btn-template-loot"
+                          >
+                            🪙 Gold / Magic Loot
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] text-amber-400 font-mono">Inject Player template:</span>
+                          <button
+                            onClick={() => injectTemplate("quest")}
+                            className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-amber-500 hover:text-amber-400 rounded transition cursor-pointer"
+                            id="btn-template-quest"
+                          >
+                            📜 Quest Codex
+                          </button>
+                          <button
+                            onClick={() => injectTemplate("inventory")}
+                            className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-amber-500 hover:text-amber-400 rounded transition cursor-pointer"
+                            id="btn-template-inventory"
+                          >
+                            🎒 Party Stash
+                          </button>
+                          <button
+                            onClick={() => injectTemplate("theories")}
+                            className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-amber-500 hover:text-amber-400 rounded transition cursor-pointer"
+                            id="btn-template-theories"
+                          >
+                            💡 Theories / Clues
+                          </button>
+                        </div>
+                      )}
 
-                      <textarea
-                        value={notes}
-                        onChange={(e) => setNotes(e.target.value)}
-                        placeholder="Detail story happenings, dice rolls, campaigns events, player dialogue..."
-                        rows={12}
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded p-4 text-zinc-200 text-sm font-sans focus:outline-none focus:border-red-500 font-sans leading-relaxed transition"
-                        id="raw-notes-notepad"
-                      />
+                      {activeNoteTab === "dm" ? (
+                        <textarea
+                          value={notes}
+                          onChange={(e) => setNotes(e.target.value)}
+                          placeholder="Detail story happenings, dice rolls, campaigns events, player dialogue..."
+                          rows={12}
+                          className="w-full bg-zinc-950 border border-zinc-800 rounded p-4 text-zinc-200 text-sm font-sans focus:outline-none focus:border-red-500 font-sans leading-relaxed transition"
+                          id="raw-notes-notepad"
+                        />
+                      ) : (
+                        <textarea
+                          value={playerNotes}
+                          onChange={(e) => setPlayerNotes(e.target.value)}
+                          placeholder="Record player-led diaries, quest notes, group stash, active campaign theories..."
+                          rows={12}
+                          className="w-full bg-zinc-950 border border-zinc-850 rounded p-4 text-amber-100/90 text-sm font-sans focus:outline-none focus:border-amber-500 font-sans leading-relaxed transition"
+                          id="player-notes-notepad"
+                        />
+                      )}
                     </div>
 
                     <div className="flex justify-end pt-3">
@@ -946,6 +1078,18 @@ export default function App() {
                     <MarkdownRenderer content={selectedSession.summary || ""} />
                   </div>
                 </div>
+
+                {/* Automation Wizard: Auto-Forge 3 Images and 1 Video from the summary */}
+                <MediaForgeWizard
+                  session={selectedSession}
+                  onUpdateSession={async (updatedSession) => {
+                    await updateExistingSession(updatedSession);
+                    setSelectedSession(updatedSession);
+                    setSessions((prev) =>
+                      prev.map((s) => (s.id === selectedSession.id ? updatedSession : s))
+                    );
+                  }}
+                />
 
                 {/* Media Section: Static High-lighting & Cinematic video */}
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -1194,23 +1338,143 @@ export default function App() {
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex justify-between items-center pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowEditCampaignModal(false)}
-                  className="px-3.5 py-2 bg-zinc-805 hover:bg-zinc-800 text-zinc-300 rounded font-sans text-xs transition cursor-pointer"
+                  onClick={() => {
+                    setShowEditCampaignModal(false);
+                    handleDeleteCampaign(selectedCampaignId);
+                  }}
+                  className="px-3 py-2 bg-red-950/20 hover:bg-red-900/35 text-red-400 hover:text-red-300 border border-red-950/40 hover:border-red-900/60 rounded font-sans text-xs transition cursor-pointer flex items-center gap-1.5"
+                  id="btn-edit-campaign-delete"
                 >
-                  Cancel
+                  <Trash2 className="w-3.5 h-3.5" /> Delete Realm
                 </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-red-500 hover:bg-red-600 text-zinc-950 font-sans font-bold text-xs rounded transition uppercase tracking-wide cursor-pointer"
-                  id="btn-edit-campaign-confirm"
-                >
-                  Engrave Changes
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowEditCampaignModal(false)}
+                    className="px-3.5 py-2 bg-zinc-805 hover:bg-zinc-800 text-zinc-300 rounded font-sans text-xs transition cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-red-500 hover:bg-red-600 text-zinc-950 font-sans font-bold text-xs rounded transition uppercase tracking-wide cursor-pointer"
+                    id="btn-edit-campaign-confirm"
+                  >
+                    Engrave Changes
+                  </button>
+                </div>
               </div>
             </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Custom Campaign Delete Confirmation Modal */}
+      {campaignToDelete && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-[60]">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-sm bg-zinc-905 border border-red-500/30 rounded-lg p-6 shadow-2xl relative"
+            id="campaign-delete-confirmation-modal"
+          >
+            <div className="absolute top-0 left-0 w-12 h-12 border-t-2 border-l-2 border-red-500/50" />
+            
+            <h2 className="font-fantasy font-extrabold text-base uppercase text-red-500 tracking-wider mb-3 flex items-center gap-2">
+              ⚠️ Collapse Campaign Realm?
+            </h2>
+            
+            <p className="text-zinc-300 text-xs leading-relaxed font-sans mb-4">
+              Are you sure you want to permanently dissolve the entire campaign setting{" "}
+              <span className="text-red-400 font-bold font-sans">
+                &ldquo;{campaignToDelete.name}&rdquo;
+              </span>{" "}
+              and <span className="text-red-400 font-bold text-red-400">ALL</span> of its recorded sessions?
+            </p>
+            
+            <div className="bg-red-950/25 border border-red-900/30 rounded p-3 mb-5">
+              <span className="text-[10px] font-mono text-red-300 uppercase block tracking-wider font-semibold mb-1">
+                ⚠️ Eternal Warning
+              </span>
+              <p className="text-[11px] text-zinc-405 leading-normal font-sans">
+                This action is permanent and completely irreversible. It will purge all records from the chronicles.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setCampaignToDelete(null)}
+                className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-zinc-300 rounded font-sans text-xs font-semibold cursor-pointer transition border border-zinc-700/50"
+                id="btn-delete-campaign-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteCampaign}
+                className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-zinc-100 font-sans font-bold text-xs rounded transition uppercase tracking-wide cursor-pointer shadow-lg shadow-red-900/40"
+                id="btn-delete-campaign-confirm"
+              >
+                Purge Realm
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Custom Session Delete Confirmation Modal */}
+      {sessionToDelete && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-[60]">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-sm bg-zinc-905 border border-red-500/30 rounded-lg p-6 shadow-2xl relative"
+            id="session-delete-confirmation-modal"
+          >
+            <div className="absolute top-0 left-0 w-12 h-12 border-t-2 border-l-2 border-red-500/50" />
+            
+            <h2 className="font-fantasy font-extrabold text-base uppercase text-red-500 tracking-wider mb-3 flex items-center gap-2">
+              ⚠️ Erase Session Chapter?
+            </h2>
+            
+            <p className="text-zinc-300 text-xs leading-relaxed font-sans mb-4">
+              Are you sure you want to permanently erase the session chronicle{" "}
+              <span className="text-red-400 font-bold font-sans">
+                &ldquo;{sessionToDelete.title}&rdquo;
+              </span>?
+            </p>
+
+            <div className="bg-red-950/25 border border-red-900/30 rounded p-3 mb-5">
+              <span className="text-[10px] font-mono text-red-300 uppercase block tracking-wider font-semibold mb-1">
+                ⚠️ Chronology Warning
+              </span>
+              <p className="text-[11px] text-zinc-405 leading-normal font-sans">
+                Once erased, the scrolls of this session are lost to time and cannot be restored.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setSessionToDelete(null)}
+                className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-zinc-300 rounded font-sans text-xs font-semibold cursor-pointer transition border border-zinc-700/50"
+                id="btn-delete-session-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteSession}
+                className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-zinc-100 font-sans font-bold text-xs rounded transition uppercase tracking-wide cursor-pointer shadow-lg shadow-red-900/40"
+                id="btn-delete-session-confirm"
+              >
+                Erase Scrolls
+              </button>
+            </div>
           </motion.div>
         </div>
       )}
