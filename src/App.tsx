@@ -22,9 +22,18 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
-import { Session, HighlightItem, CharacterItem } from "./types";
+import { Session, Campaign, HighlightItem, CharacterItem } from "./types";
 import { isRealFirebase, auth, logInWithGoogle, logOutUser } from "./firebase";
-import { fetchAllSessions, createNewSession, updateExistingSession, removeSession } from "./storage";
+import {
+  fetchAllCampaigns,
+  createNewCampaign,
+  updateExistingCampaign,
+  removeCampaign,
+  fetchAllSessions,
+  createNewSession,
+  updateExistingSession,
+  removeSession,
+} from "./storage";
 
 // Modular sub-components
 import { MarkdownRenderer } from "./components/MarkdownRenderer";
@@ -38,6 +47,22 @@ export default function App() {
   const [user, setUser] = useState<{ uid: string; email: string | null; displayName: string | null } | null>(null);
   const [authLoading, setAuthLoading] = useState(isRealFirebase);
   const [isGuestMode, setIsGuestMode] = useState(false);
+
+  // Campaign parent collections
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [campaignsLoading, setCampaignsLoading] = useState(false);
+  const [selectedCampaignId, setSelectedCampaignId] = useState("");
+
+  // Campaign creation / edit states
+  const [showCreateCampaignModal, setShowCreateCampaignModal] = useState(false);
+  const [newCampaignName, setNewCampaignName] = useState("");
+  const [newCampaignSetting, setNewCampaignSetting] = useState("");
+  const [newCampaignDesc, setNewCampaignDesc] = useState("");
+
+  const [showEditCampaignModal, setShowEditCampaignModal] = useState(false);
+  const [editCampaignName, setEditCampaignName] = useState("");
+  const [editCampaignSetting, setEditCampaignSetting] = useState("");
+  const [editCampaignDesc, setEditCampaignDesc] = useState("");
 
   // Campaign session collections
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -86,25 +111,56 @@ export default function App() {
 
   useEffect(() => {
     if (activeUserId) {
-      loadSessions();
+      loadCampaignsAndSessions();
     } else {
+      setCampaigns([]);
+      setSelectedCampaignId("");
       setSessions([]);
       setSelectedSession(null);
     }
   }, [activeUserId]);
 
-  async function loadSessions(selectId?: string) {
+  async function loadCampaignsAndSessions(targetCampaignId?: string, targetSessionId?: string) {
+    if (!activeUserId) return;
+    setCampaignsLoading(true);
     setSessionsLoading(true);
     try {
-      const list = await fetchAllSessions(activeUserId);
-      setSessions(list);
+      // 1. Fetch campaigns
+      let campaignList = await fetchAllCampaigns(activeUserId);
       
-      if (list.length > 0) {
-        // Select specified or first session by default
-        const target = selectId ? list.find((s) => s.id === selectId) : list[0];
-        const nextActive = target || list[0];
+      // Auto-seed standard default campaign if list is totally empty
+      if (campaignList.length === 0) {
+        const defaultCamp: Campaign = {
+          id: "campaign-default-" + Date.now(),
+          userId: activeUserId,
+          name: "Chronicles of Eternia",
+          setting: "D&D 5th Edition",
+          description: "A high-fantasy chronicle following the quest across the kingdoms of Eternia.",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        await createNewCampaign(defaultCamp);
+        campaignList = [defaultCamp];
+      }
+      
+      setCampaigns(campaignList);
+      
+      // Select appropriate campaign
+      const campId = targetCampaignId || selectedCampaignId || campaignList[0]?.id || "";
+      setSelectedCampaignId(campId);
+      
+      // 2. Fetch sessions
+      const sessionList = await fetchAllSessions(activeUserId);
+      setSessions(sessionList);
+      
+      // Filter sessions active for this campaign
+      const campSessions = sessionList.filter((s) => s.campaignId === campId);
+      if (campSessions.length > 0) {
+        const target = targetSessionId 
+          ? campSessions.find((s) => s.id === targetSessionId) 
+          : campSessions[0];
+        const nextActive = target || campSessions[0];
         setSelectedSession(nextActive);
-        
         setSessionTitle(nextActive.title);
         setSessionDate(nextActive.date);
         setNotes(nextActive.notes);
@@ -113,9 +169,95 @@ export default function App() {
         setSelectedSession(null);
       }
     } catch (e) {
-      console.error("Sessions retrieval anomaly:", e);
+      console.error("Retrieved err:", e);
     } finally {
+      setCampaignsLoading(false);
       setSessionsLoading(false);
+    }
+  }
+
+  async function handleSelectCampaign(campId: string) {
+    setSelectedCampaignId(campId);
+    
+    // Filter sessions active for this campaign
+    const campSessions = sessions.filter((s) => s.campaignId === campId);
+    if (campSessions.length > 0) {
+      const nextActive = campSessions[0];
+      setSelectedSession(nextActive);
+      setSessionTitle(nextActive.title);
+      setSessionDate(nextActive.date);
+      setNotes(nextActive.notes);
+      setAudioTranscription(nextActive.audioTranscription || "");
+    } else {
+      setSelectedSession(null);
+    }
+  }
+
+  // Action: Spawn a new Campaign parent
+  async function handleCreateCampaign(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newCampaignName.trim() || !activeUserId) return;
+
+    const newCampId = "campaign-" + Date.now();
+    const newCamp: Campaign = {
+      id: newCampId,
+      userId: activeUserId,
+      name: newCampaignName.trim(),
+      setting: newCampaignSetting.trim() || "D&D 5th Edition",
+      description: newCampaignDesc.trim() || "No campaign notes added yet.",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await createNewCampaign(newCamp);
+      setNewCampaignName("");
+      setNewCampaignSetting("");
+      setNewCampaignDesc("");
+      setShowCreateCampaignModal(false);
+      await loadCampaignsAndSessions(newCampId);
+    } catch (e) {
+      console.error("Campaign spawn error:", e);
+    }
+  }
+
+  // Action: Morph existing campaign profile properties
+  async function handleUpdateCampaign(e: React.FormEvent) {
+    e.preventDefault();
+    const activeCamp = campaigns.find((c) => c.id === selectedCampaignId);
+    if (!activeCamp || !editCampaignName.trim() || !activeUserId) return;
+
+    const updatedCamp: Campaign = {
+      ...activeCamp,
+      name: editCampaignName.trim(),
+      setting: editCampaignSetting.trim(),
+      description: editCampaignDesc.trim(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await updateExistingCampaign(updatedCamp);
+      setShowEditCampaignModal(false);
+      setCampaigns((prev) => prev.map((c) => (c.id === selectedCampaignId ? updatedCamp : c)));
+    } catch (e) {
+      console.error("Campaign update error:", e);
+    }
+  }
+
+  // Action: Destroy the campaign world and all child chapters
+  async function handleDeleteCampaign(campId: string) {
+    if (!campId || !activeUserId) return;
+    const campObj = campaigns.find((c) => c.id === campId);
+    if (!campObj) return;
+
+    const accept = confirm(`Are you sure you want to permanently erase the entire campaign setting "${campObj.name}" and ALL of its associated sessions?\n\nWARNING: THIS ACTION CANNOT BE UNDONE!`);
+    if (!accept) return;
+
+    try {
+      await removeCampaign(campId, activeUserId);
+      await loadCampaignsAndSessions();
+    } catch (e) {
+      console.error("Campaign purging anomaly:", e);
     }
   }
 
@@ -126,6 +268,9 @@ export default function App() {
     }
     setUser(null);
     setIsGuestMode(false);
+    setCampaigns([]);
+    setSelectedCampaignId("");
+    setSessions([]);
     setSelectedSession(null);
   }
 
@@ -138,6 +283,7 @@ export default function App() {
     const newSessionItem: Session = {
       id: newId,
       userId: activeUserId,
+      campaignId: selectedCampaignId,
       title: newTitle.trim(),
       date: newDate,
       notes: "## 📒 DM RAW LOGS\n\n- The adventure begins...\n- Write combat logs or encounter details here.",
@@ -153,7 +299,7 @@ export default function App() {
       await createNewSession(newSessionItem);
       setNewTitle("");
       setShowCreateModal(false);
-      await loadSessions(newId);
+      await loadCampaignsAndSessions(selectedCampaignId, newId);
     } catch (e) {
       console.error("Save anomaly:", e);
     } finally {
@@ -198,7 +344,7 @@ export default function App() {
 
     try {
       await removeSession(id, activeUserId);
-      await loadSessions();
+      await loadCampaignsAndSessions(selectedCampaignId);
     } catch (e) {
       console.error("Deletion failure:", e);
     }
@@ -416,9 +562,55 @@ export default function App() {
       <div className="flex-1 flex flex-col lg:flex-row min-h-0">
         {/* Left column sidebar lists */}
         <aside className="w-full lg:w-72 bg-zinc-950/50 border-r border-b lg:border-b-0 border-zinc-800 flex flex-col shrink-0">
-          <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/10">
+          
+          {/* Active Campaign Selector Group */}
+          <div className="p-4 border-b border-zinc-800 bg-zinc-900/20 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <BookOpen className="w-4 h-4 text-amber-500" />
+                <span className="text-xs uppercase font-fantasy tracking-wider font-bold text-zinc-300">
+                  REALM CAMPAIGNS
+                </span>
+              </div>
+              <button
+                onClick={() => setShowCreateCampaignModal(true)}
+                className="p-1 bg-amber-500/10 text-amber-400 hover:bg-amber-500 hover:text-zinc-950 rounded transition border border-amber-500/20"
+                id="btn-sidebar-plus-campaign"
+                title="Create New Campaign World"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {campaignsLoading ? (
+              <div className="flex items-center text-[11px] text-zinc-500 font-mono py-1">
+                <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> Unshrouding realms...
+              </div>
+            ) : campaigns.length === 0 ? (
+              <div className="text-[10px] text-zinc-500 italic bg-zinc-950 p-2 border border-zinc-900 rounded">
+                No active realms. Click "+" to spawn!
+              </div>
+            ) : (
+              <div className="relative">
+                <select
+                  value={selectedCampaignId}
+                  onChange={(e) => handleSelectCampaign(e.target.value)}
+                  className="w-full bg-zinc-950 text-amber-400 border border-zinc-800 focus:border-amber-550 focus:outline-none rounded py-1.5 px-2 text-xs font-sans font-medium hover:border-zinc-700 transition cursor-pointer"
+                  id="campaign-realm-selector"
+                >
+                  {campaigns.map((c) => (
+                    <option key={c.id} value={c.id} className="bg-zinc-900 text-zinc-100">
+                      🏰 {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-905/10">
             <div className="flex items-center gap-1.5">
-              <Scroll className="w-4 h-4 text-amber-500" />
+              <Scroll className="w-4 h-4 text-amber-505" />
               <span className="text-xs uppercase font-fantasy tracking-wider font-semibold text-zinc-300">
                 CAMPAIGN CHAPTERS
               </span>
@@ -439,59 +631,109 @@ export default function App() {
               <div className="flex items-center justify-center p-4 text-xs text-zinc-500 font-sans">
                 <Loader2 className="w-4 h-4 animate-spin mr-2" /> Unsealing codex...
               </div>
-            ) : sessions.length === 0 ? (
+            ) : sessions.filter((s) => s.campaignId === selectedCampaignId).length === 0 ? (
               <div className="p-4 text-center text-xs text-zinc-500 italic font-sans leading-normal">
-                No session chapters created yet. Click the "+" button above to start your legend!
+                No session chapters created yet in this campaign. Click the "+" button above to start your legend!
               </div>
             ) : (
-              sessions.map((item) => (
-                <div
-                  key={item.id}
-                  onClick={() => {
-                    setSelectedSession(item);
-                    setSessionTitle(item.title);
-                    setSessionDate(item.date);
-                    setNotes(item.notes);
-                    setAudioTranscription(item.audioTranscription || "");
-                  }}
-                  className={`group w-full p-3.5 text-left rounded border transition flex items-center justify-between cursor-pointer ${
-                    selectedSession?.id === item.id
-                      ? "bg-amber-500/10 border-amber-500/40 text-amber-400 parchment-glow"
-                      : "bg-zinc-900/40 border-zinc-850 hover:bg-zinc-900 hover:border-zinc-700 text-zinc-300"
-                  }`}
-                  id={`side-session-${item.id}`}
-                >
-                  <div className="space-y-1 min-w-0 pr-2">
-                    <h3 className="font-fantasy font-bold text-xs md:text-sm truncate tracking-wide">
-                      {item.title}
-                    </h3>
-                    <div className="flex items-center gap-1 text-[10px] text-zinc-500 font-mono">
-                      <Calendar className="w-3 h-3 text-zinc-650" />
-                      <span>{item.date}</span>
+              sessions
+                .filter((s) => s.campaignId === selectedCampaignId)
+                .map((item) => (
+                  <div
+                    key={item.id}
+                    onClick={() => {
+                      setSelectedSession(item);
+                      setSessionTitle(item.title);
+                      setSessionDate(item.date);
+                      setNotes(item.notes);
+                      setAudioTranscription(item.audioTranscription || "");
+                    }}
+                    className={`group w-full p-3.5 text-left rounded border transition flex items-center justify-between cursor-pointer ${
+                      selectedSession?.id === item.id
+                        ? "bg-amber-500/10 border-amber-500/40 text-amber-400 parchment-glow"
+                        : "bg-zinc-900/40 border-zinc-850 hover:bg-zinc-900 hover:border-zinc-700 text-zinc-300"
+                    }`}
+                    id={`side-session-${item.id}`}
+                  >
+                    <div className="space-y-1 min-w-0 pr-2">
+                      <h3 className="font-fantasy font-bold text-xs md:text-sm truncate tracking-wide">
+                        {item.title}
+                      </h3>
+                      <div className="flex items-center gap-1 text-[10px] text-zinc-500 font-mono">
+                        <Calendar className="w-3 h-3 text-zinc-650" />
+                        <span>{item.date}</span>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteSession(item.id);
+                        }}
+                        className="p-1 hover:bg-red-950/40 text-zinc-600 hover:text-red-400 rounded transition opacity-0 group-hover:opacity-100"
+                        title="Annihilate Session Logs"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                      <ChevronRight className="w-4 h-4 text-zinc-600 group-hover:text-amber-500" />
                     </div>
                   </div>
-                  
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteSession(item.id);
-                      }}
-                      className="p-1 hover:bg-red-950/40 text-zinc-600 hover:text-red-400 rounded transition opacity-0 group-hover:opacity-100"
-                      title="Annihilate Session Logs"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                    <ChevronRight className="w-4 h-4 text-zinc-600 group-hover:text-amber-500" />
-                  </div>
-                </div>
-              ))
+                ))
             )}
           </div>
         </aside>
 
         {/* Right column main detail panels scroll container */}
         <main className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
+          
+          {/* Active Campaign World Info Strip Banner */}
+          {campaigns.find((c) => c.id === selectedCampaignId) && (() => {
+            const activeCamp = campaigns.find((c) => c.id === selectedCampaignId)!;
+            return (
+              <div className="p-4 bg-zinc-900/60 border border-zinc-800 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs leading-relaxed shadow-lg">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1 text-amber-500 font-mono text-[10px] uppercase font-bold tracking-widest">
+                    <Scroll className="w-3.5 h-3.5 animate-pulse" /> Active Campaign Environment
+                  </div>
+                  <h2 className="font-fantasy font-black text-base sm:text-lg text-zinc-100 tracking-wider uppercase">
+                    {activeCamp.name}
+                  </h2>
+                  <p className="text-zinc-400 font-sans">
+                    <span className="text-amber-400/90 font-mono text-[10px] uppercase font-bold">Edition:</span> {activeCamp.setting || "D&D 5e / Custom"}
+                  </p>
+                  {activeCamp.description && (
+                    <p className="text-zinc-500 italic max-w-3xl mt-1 text-[11px] font-sans leading-normal line-clamp-2">
+                      "{activeCamp.description}"
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
+                  <button
+                    onClick={() => {
+                      setEditCampaignName(activeCamp.name);
+                      setEditCampaignSetting(activeCamp.setting || "");
+                      setEditCampaignDesc(activeCamp.description || "");
+                      setShowEditCampaignModal(true);
+                    }}
+                    className="px-3 py-1.5 bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-amber-400 hover:text-amber-300 rounded text-[11px] font-sans font-bold transition flex items-center gap-1"
+                    id="btn-edit-lore"
+                  >
+                    <Edit className="w-3 h-3" /> Lore Details
+                  </button>
+                  <button
+                    onClick={() => handleDeleteCampaign(activeCamp.id)}
+                    className="p-1.5 hover:bg-red-950/45 text-zinc-650 hover:text-red-400 rounded transition border border-zinc-805"
+                    title="Dissolve Campaign Realm"
+                    id="btn-delete-campaign"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
+
           <AnimatePresence mode="wait">
             {!selectedSession ? (
               <motion.div
@@ -508,7 +750,7 @@ export default function App() {
                   Ready to Scribe, DM?
                 </h2>
                 <p className="text-zinc-500 text-xs sm:text-sm mt-1 max-w-[420px] font-sans leading-normal">
-                  No active session chapter selected. Pick an existing campaign from the sidebar or click the "+" button to unscroll a new chronicle page!
+                  No active session chapter selected in this campaign. Create or pick another, or click the "+" button below to unscroll a new chronicle page!
                 </p>
                 <button
                   onClick={() => setShowCreateModal(true)}
@@ -757,7 +999,7 @@ export default function App() {
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="w-full max-w-sm bg-zinc-90 w bg-zinc-900 border border-zinc-800 rounded-lg p-6 shadow-2xl relative"
+            className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-lg p-6 shadow-2xl relative"
             id="creation-modal-dialog"
           >
             <div className="absolute top-0 left-0 w-12 h-12 border-t-2 border-l-2 border-amber-500/20" />
@@ -809,6 +1051,163 @@ export default function App() {
                   id="btn-create-chapter-confirm"
                 >
                   Summon Scroll
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Campaign Realm Creation Modal */}
+      {showCreateCampaignModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-lg p-6 shadow-2xl relative"
+            id="create-campaign-modal"
+          >
+            <div className="absolute top-0 left-0 w-12 h-12 border-t-2 border-l-2 border-amber-500/20" />
+            
+            <h2 className="font-fantasy font-extrabold text-base uppercase text-amber-400 tracking-wider mb-4 border-b border-zinc-800 pb-2">
+              🏰 Forge New Campaign Realm
+            </h2>
+
+            <form onSubmit={handleCreateCampaign} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-mono text-zinc-400 uppercase block tracking-wider font-semibold">
+                  Campaign/World Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newCampaignName}
+                  onChange={(e) => setNewCampaignName(e.target.value)}
+                  placeholder="e.g. Curse of Strahd, Eberron Legacy..."
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-700 focus:outline-none focus:border-amber-500 font-sans"
+                  id="new-campaign-name-input"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-mono text-zinc-400 uppercase block tracking-wider font-semibold">
+                  Setting / Ruleset Edition
+                </label>
+                <input
+                  type="text"
+                  value={newCampaignSetting}
+                  onChange={(e) => setNewCampaignSetting(e.target.value)}
+                  placeholder="e.g. D&D 5e, Pathfinder 2e, Custom Lore..."
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-700 focus:outline-none focus:border-amber-500 font-sans"
+                  id="new-campaign-setting-input"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-mono text-zinc-400 uppercase block tracking-wider font-semibold">
+                  World Description & Lore Hook
+                </label>
+                <textarea
+                  value={newCampaignDesc}
+                  onChange={(e) => setNewCampaignDesc(e.target.value)}
+                  placeholder="Brief synopsis of the main quest, continents, or major factions..."
+                  rows={3}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-700 focus:outline-none focus:border-amber-500 font-sans resize-none"
+                  id="new-campaign-desc-input"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateCampaignModal(false)}
+                  className="px-3.5 py-2 bg-zinc-800 text-zinc-300 rounded font-sans text-xs transition hover:bg-zinc-700 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-sans font-bold text-xs rounded transition uppercase tracking-wide cursor-pointer"
+                  id="btn-create-campaign-confirm"
+                >
+                  Conjure Realm
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Campaign Realm Edit Modal */}
+      {showEditCampaignModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-lg p-6 shadow-2xl relative"
+            id="edit-campaign-modal"
+          >
+            <div className="absolute top-0 left-0 w-12 h-12 border-t-2 border-l-2 border-amber-500/20" />
+            
+            <h2 className="font-fantasy font-extrabold text-base uppercase text-amber-400 tracking-wider mb-4 border-b border-zinc-800 pb-2">
+              📜 Morph Campaign Details
+            </h2>
+
+            <form onSubmit={handleUpdateCampaign} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-mono text-zinc-400 uppercase block tracking-wider font-semibold">
+                  Campaign/World Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editCampaignName}
+                  onChange={(e) => setEditCampaignName(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-amber-500 font-sans"
+                  id="edit-campaign-name-input"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-mono text-zinc-400 uppercase block tracking-wider font-semibold">
+                  Setting / Ruleset Edition
+                </label>
+                <input
+                  type="text"
+                  value={editCampaignSetting}
+                  onChange={(e) => setEditCampaignSetting(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-amber-500 font-sans"
+                  id="edit-campaign-setting-input"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-mono text-zinc-400 uppercase block tracking-wider font-semibold">
+                  World Description & Lore Hook
+                </label>
+                <textarea
+                  value={editCampaignDesc}
+                  onChange={(e) => setEditCampaignDesc(e.target.value)}
+                  rows={3}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-amber-500 font-sans resize-none"
+                  id="edit-campaign-desc-input"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditCampaignModal(false)}
+                  className="px-3.5 py-2 bg-zinc-800 text-zinc-300 rounded font-sans text-xs transition hover:bg-zinc-700 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-sans font-bold text-xs rounded transition uppercase tracking-wide cursor-pointer"
+                  id="btn-edit-campaign-confirm"
+                >
+                  Engrave Changes
                 </button>
               </div>
             </form>

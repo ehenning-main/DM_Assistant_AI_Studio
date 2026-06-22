@@ -11,9 +11,20 @@ export interface CharacterItem {
   description: string;
 }
 
+export interface Campaign {
+  id: string;
+  userId: string;
+  name: string;
+  setting: string;
+  description: string;
+  createdAt: any;
+  updatedAt: any;
+}
+
 export interface Session {
   id: string;
   userId: string;
+  campaignId: string;
   title: string;
   date: string;
   notes: string;

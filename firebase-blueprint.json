@@ -1,5 +1,43 @@
 {
   "entities": {
+    "Campaign": {
+      "title": "Campaign",
+      "description": "Multi-session RPG campaign campaign settings, summary, characters, list of sessions, and details managed by the Dungeon Master.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique campaign ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "ID of the Dungeon Master"
+        },
+        "name": {
+          "type": "string",
+          "description": "Campaign title or chronicle name"
+        },
+        "setting": {
+          "type": "string",
+          "description": "RPG system, game world setting, mythology, or flavor details"
+        },
+        "description": {
+          "type": "string",
+          "description": "Short description of the campaign arc"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server-side creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server-side last updated timestamp"
+        }
+      },
+      "required": ["id", "userId", "name", "createdAt", "updatedAt"]
+    },
     "Session": {
       "title": "Session",
       "description": "Dungeon Master game session containing raw notes, audio recordings, summarizations, visual highlights, and video links.",
@@ -12,6 +50,10 @@
         "userId": {
           "type": "string",
           "description": "UID of the owner/Dungeon Master"
+        },
+        "campaignId": {
+          "type": "string",
+          "description": "Parent Campaign ID linking this session to a specific campaign"
         },
         "title": {
           "type": "string",
@@ -28,6 +70,10 @@
         "audioUrl": {
           "type": "string",
           "description": "Link to recorded audio session or audio note, if any"
+        },
+        "audioTranscription": {
+          "type": "string",
+          "description": "The transcribed audio, if uploaded and parsed"
         },
         "summary": {
           "type": "string",
@@ -50,6 +96,10 @@
           "type": "array",
           "description": "An array of highlight items, each with an image URL and a brief caption description"
         },
+        "characters": {
+          "type": "array",
+          "description": "Session key characters"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -61,10 +111,14 @@
           "description": "Server-side last updated timestamp"
         }
       },
-      "required": ["id", "userId", "title", "date", "createdAt", "updatedAt"]
+      "required": ["id", "userId", "campaignId", "title", "date", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
+    "campaigns/{campaignId}": {
+      "schema": "Campaign",
+      "description": "Collection of Dungeon Master campaigns, scoped by owners ID"
+    },
     "sessions/{sessionId}": {
       "schema": "Session",
       "description": "Collection of Dungeon Master game sessions, scoped by owner ID"

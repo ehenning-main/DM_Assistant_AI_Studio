@@ -6,8 +6,6 @@
 
 This contains everything you need to run your app locally.
 
-THIS TOOL IS DEVELOPED AS PART OF THE NINCHI.AI TEST ENVIRONMENT.
-
 View your app in AI Studio: https://ai.studio/apps/b5927daf-cdf6-493d-9c1b-635889538884
 
 ## Run Locally
