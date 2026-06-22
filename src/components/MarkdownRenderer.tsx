@@ -32,7 +32,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
           return (
             <h2
               key={idx}
-              className="text-2xl font-fantasy font-bold text-amber-400 tracking-wide border-b border-zinc-800 pb-2 pt-4 flex items-center gap-2"
+              className="text-2xl font-fantasy font-bold text-red-400 tracking-wide border-b border-zinc-800 pb-2 pt-4 flex items-center gap-2"
               id={`md-h1-${idx}`}
             >
               {text}
@@ -46,7 +46,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
           return (
             <h3
               key={idx}
-              className="text-xl font-fantasy font-semibold text-yellow-500 tracking-wide pt-3 flex items-center gap-2"
+              className="text-xl font-fantasy font-semibold text-red-500 tracking-wide pt-3 flex items-center gap-2"
               id={`md-h2-${idx}`}
             >
               {text}
@@ -60,7 +60,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
           return (
             <h4
               key={idx}
-              className="text-md font-fantasy font-medium text-amber-200 uppercase tracking-wider pt-2"
+              className="text-md font-fantasy font-medium text-red-200 uppercase tracking-wider pt-2"
               id={`md-h3-${idx}`}
             >
               {text}
@@ -80,7 +80,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
           const italicized = parseInlineFormatting(text);
           return (
             <div key={idx} className="flex gap-2 pl-4 text-zinc-300">
-              <span className="text-amber-500 select-none">✦</span>
+              <span className="text-red-500 select-none">✦</span>
               <p className="flex-1 text-sm md:text-base">{italicized}</p>
             </div>
           );
@@ -103,7 +103,7 @@ function parseInlineFormatting(text: string): React.ReactNode[] {
   return parts.map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**")) {
       return (
-        <strong key={i} className="text-amber-400 font-semibold font-fantasy">
+        <strong key={i} className="text-red-400 font-semibold font-fantasy">
           {part.slice(2, -2)}
         </strong>
       );

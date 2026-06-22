@@ -255,7 +255,7 @@ export function VideoSection({
       ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
       ctx.fillRect(0, height - 60, width, 60);
 
-      ctx.fillStyle = "#fbbf24"; // amber-400
+      ctx.fillStyle = "#ef4444"; // red-500
       ctx.font = "bold 14px 'Cinzel', serif";
       ctx.textAlign = "center";
       ctx.fillText(prompt.length > 55 ? prompt.substring(0, 55) + "..." : prompt, width / 2, height - 38);
@@ -279,12 +279,12 @@ export function VideoSection({
     <div className="space-y-4 p-5 bg-zinc-900 border border-zinc-800 rounded-lg parchment-glow" id="video-panel">
       <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
         <div className="flex items-center gap-2">
-          <Video className="w-5 h-5 text-amber-500 animate-pulse" />
+          <Video className="w-5 h-5 text-red-500 animate-pulse" />
           <h3 className="font-fantasy font-semibold text-zinc-100 tracking-wider text-base">
             CAMPAIGN CINEMATIC SCROLLS (One Short Video)
           </h3>
         </div>
-        <span className="font-mono text-[10px] bg-amber-500/10 text-amber-500 border border-amber-500/30 px-2 py-0.5 rounded uppercase">
+        <span className="font-mono text-[10px] bg-red-500/10 text-red-500 border border-red-500/30 px-2 py-0.5 rounded uppercase">
           Veo-3.1 Native
         </span>
       </div>
@@ -294,7 +294,7 @@ export function VideoSection({
       </p>
 
       {errorDetails && (
-        <div className="flex gap-2 items-start p-3.5 bg-amber-500/5 border border-amber-500/20 rounded text-amber-300 text-xs font-sans">
+        <div className="flex gap-2 items-start p-3.5 bg-red-500/5 border border-red-500/20 rounded text-red-300 text-xs font-sans">
           <AlertCircle className="w-4.5 h-4.5 shrink-0 mt-0.5" />
           <div>
             <span className="font-bold block mb-0.5">Simulation Triggered</span>
@@ -315,7 +315,7 @@ export function VideoSection({
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Describe the cinematic camera motion (e.g., 'The camera zooms in slowly on a dangerous lich raising its staff, surrounded by toxic green smoke'...)"
               rows={3}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-sm text-zinc-100 placeholder-zinc-650 focus:outline-none focus:border-amber-500 font-sans transition"
+              className="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-sm text-zinc-100 placeholder-zinc-650 focus:outline-none focus:border-red-500 font-sans transition"
               id="video-prompt-input"
             />
           </div>
@@ -329,7 +329,7 @@ export function VideoSection({
             <button
               type="submit"
               disabled={!prompt.trim()}
-              className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-zinc-800 disabled:text-zinc-500 text-zinc-950 font-sans font-medium text-xs md:text-sm rounded transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
+              className="px-4 py-2 bg-red-500 hover:bg-red-600 disabled:bg-zinc-800 disabled:text-zinc-500 text-zinc-950 font-sans font-medium text-xs md:text-sm rounded transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
               id="btn-forge-video"
             >
               <Sparkles className="w-4 h-4 fill-zinc-950" /> Forge Campaign Video
@@ -341,7 +341,7 @@ export function VideoSection({
       {/* Generating State */}
       {videoStatus === "generating" && (
         <div className="flex flex-col items-center justify-center py-10 bg-zinc-950/60 border border-zinc-850 rounded">
-          <Loader2 className="w-10 h-10 text-amber-500 animate-spin mb-4" />
+          <Loader2 className="w-10 h-10 text-red-500 animate-spin mb-4" />
           <h4 className="font-fantasy font-semibold text-zinc-200 text-sm tracking-wide">
             TRANSMUTING ESSENCE TO VIDEO
           </h4>
@@ -372,7 +372,7 @@ export function VideoSection({
             </span>
             <button
               onClick={() => onVideoUpdated({ videoStatus: "idle" })}
-              className="flex items-center gap-1 text-[11px] font-mono text-amber-500 hover:text-amber-400 font-semibold"
+              className="flex items-center gap-1 text-[11px] font-mono text-red-500 hover:text-red-400 font-semibold"
               id="btn-reforge-video"
             >
               <RefreshCw className="w-3.5 h-3.5" /> Reforge Video
@@ -398,7 +398,7 @@ export function VideoSection({
             </span>
             <button
               onClick={() => onVideoUpdated({ videoStatus: "idle" })}
-              className="flex items-center gap-1 text-[11px] font-mono text-amber-500 hover:text-amber-400 font-semibold"
+              className="flex items-center gap-1 text-[11px] font-mono text-red-500 hover:text-red-400 font-semibold"
               id="btn-reforge-video-real"
             >
               <RefreshCw className="w-3.5 h-3.5" /> Reforge Video
@@ -420,7 +420,7 @@ export function VideoSection({
                 videoUrl: "canvas_ambient_fallback",
               })
             }
-            className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-sans font-medium text-xs sm:text-sm rounded transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
+            className="px-4 py-2 bg-red-500 hover:bg-red-600 text-zinc-950 font-sans font-medium text-xs sm:text-sm rounded transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
             id="btn-unlock-simulation"
           >
             <Film className="w-4 h-4 fill-zinc-950" /> Enable Motion Simulator

@@ -73,12 +73,12 @@ export function HighlightSection({ highlights, onChange }: HighlightSectionProps
     <div className="space-y-4 p-5 bg-zinc-900 border border-zinc-800 rounded-lg parchment-glow" id="highlight-panel">
       <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
         <div className="flex items-center gap-2">
-          <Image className="w-5 h-5 text-amber-500 animate-pulse" />
+          <Image className="w-5 h-5 text-red-500 animate-pulse" />
           <h3 className="font-fantasy font-semibold text-zinc-100 tracking-wider text-base">
             ILLUSTRATED CHRONICLE HIGHLIGHTS
           </h3>
         </div>
-        <span className="font-mono text-[10px] bg-amber-500/10 text-amber-500 border border-amber-500/30 px-2 py-0.5 rounded uppercase">
+        <span className="font-mono text-[10px] bg-red-500/10 text-red-500 border border-red-500/30 px-2 py-0.5 rounded uppercase">
           Imagen Forge
         </span>
       </div>
@@ -96,13 +96,13 @@ export function HighlightSection({ highlights, onChange }: HighlightSectionProps
             onChange={(e) => setPrompt(e.target.value)}
             placeholder="Describe the highlight scene (e.g. 'A glowing iron longsword embedded in ancient stone moss'...)"
             disabled={generating}
-            className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500 font-sans transition"
+            className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-red-500 font-sans transition"
             id="highlight-prompt-input"
           />
           <button
             type="submit"
             disabled={generating || !prompt.trim()}
-            className="px-4 py-2 bg-amber-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-zinc-950 font-sans font-medium text-xs md:text-sm rounded transition hover:bg-amber-600 active:scale-95 flex items-center gap-1 cursor-pointer"
+            className="px-4 py-2 bg-red-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-zinc-950 font-sans font-medium text-xs md:text-sm rounded transition hover:bg-red-600 active:scale-95 flex items-center gap-1 cursor-pointer"
             id="btn-forge-illustration"
           >
             {generating ? (
@@ -134,7 +134,7 @@ export function HighlightSection({ highlights, onChange }: HighlightSectionProps
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
-                className="group relative bg-zinc-950 border border-zinc-850 hover:border-amber-500/40 rounded overflow-hidden flex flex-col p-2.5 transition"
+                className="group relative bg-zinc-950 border border-zinc-850 hover:border-red-500/40 rounded overflow-hidden flex flex-col p-2.5 transition"
                 id={`highlight-card-${item.id}`}
               >
                 {/* Thumbnail Display */}
@@ -164,7 +164,7 @@ export function HighlightSection({ highlights, onChange }: HighlightSectionProps
                       <textarea
                         value={editCaption}
                         onChange={(e) => setEditCaption(e.target.value)}
-                        className="w-full bg-zinc-900 border border-zinc-700 rounded p-1.5 text-xs text-zinc-100 font-sans focus:outline-none focus:border-amber-500"
+                        className="w-full bg-zinc-900 border border-zinc-700 rounded p-1.5 text-xs text-zinc-100 font-sans focus:outline-none focus:border-red-500"
                         rows={2}
                       />
                       <div className="flex justify-end gap-1">
@@ -190,7 +190,7 @@ export function HighlightSection({ highlights, onChange }: HighlightSectionProps
                       </p>
                       <button
                         onClick={() => startEditing(item)}
-                        className="p-1 hover:bg-zinc-900 text-zinc-500 hover:text-amber-400 rounded transition shrink-0"
+                        className="p-1 hover:bg-zinc-900 text-zinc-500 hover:text-red-400 rounded transition shrink-0"
                         title="Edit caption"
                       >
                         <Edit2 className="w-3 h-3" />

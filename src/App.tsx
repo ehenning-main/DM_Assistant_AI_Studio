@@ -501,14 +501,14 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-amber-500 selection:text-zinc-950">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-red-500 selection:text-zinc-950">
       {/* Header element */}
       <header className="bg-zinc-900/90 backdrop-blur border-b border-zinc-800 py-4 px-4 sm:px-6 sticky top-0 z-30 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <BookOpen className="w-6 h-6 text-amber-400 animate-pulse" />
+          <BookOpen className="w-6 h-6 text-red-400 animate-pulse" />
           <div>
             <h1 className="font-fantasy font-black tracking-widest text-zinc-100 text-sm sm:text-base md:text-lg flex items-center gap-1.5 uppercase">
-              DUNGEON MASTER <span className="text-amber-400">ASSISTANT</span>
+              DUNGEON MASTER <span className="text-red-400">ASSISTANT</span>
             </h1>
             <span className="text-[10px] font-mono text-zinc-400 tracking-wide block sm:inline">
               Campaign Book of Memories
@@ -526,8 +526,8 @@ export default function App() {
               </>
             ) : (
               <>
-                <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                <span className="text-amber-500 font-mono text-[10px]">LOCAL ENGINE FALLBACK</span>
+                <div className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                <span className="text-red-500 font-mono text-[10px]">LOCAL ENGINE FALLBACK</span>
               </>
             )}
           </div>
@@ -550,8 +550,8 @@ export default function App() {
 
       {/* Persistence Notification Alert Banner */}
       {!isRealFirebase && (
-        <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-center text-xs text-amber-300 flex items-center justify-center gap-1.5">
-          <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0" />
+        <div className="bg-red-500/10 border-b border-red-500/20 px-4 py-2 text-center text-xs text-red-300 flex items-center justify-center gap-1.5">
+          <ShieldAlert className="w-4 h-4 text-red-500 shrink-0" />
           <span>
             Currently in local mode. To back up campaign logs permanently in a secure cloud database, ask me in the chat to <strong>"initialize Firebase"</strong>!
           </span>
@@ -567,14 +567,14 @@ export default function App() {
           <div className="p-4 border-b border-zinc-800 bg-zinc-900/20 space-y-2.5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
-                <BookOpen className="w-4 h-4 text-amber-500" />
+                <BookOpen className="w-4 h-4 text-red-500" />
                 <span className="text-xs uppercase font-fantasy tracking-wider font-bold text-zinc-300">
                   REALM CAMPAIGNS
                 </span>
               </div>
               <button
                 onClick={() => setShowCreateCampaignModal(true)}
-                className="p-1 bg-amber-500/10 text-amber-400 hover:bg-amber-500 hover:text-zinc-950 rounded transition border border-amber-500/20"
+                className="p-1 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-zinc-950 rounded transition border border-red-500/20"
                 id="btn-sidebar-plus-campaign"
                 title="Create New Campaign World"
               >
@@ -595,7 +595,7 @@ export default function App() {
                 <select
                   value={selectedCampaignId}
                   onChange={(e) => handleSelectCampaign(e.target.value)}
-                  className="w-full bg-zinc-950 text-amber-400 border border-zinc-800 focus:border-amber-550 focus:outline-none rounded py-1.5 px-2 text-xs font-sans font-medium hover:border-zinc-700 transition cursor-pointer"
+                  className="w-full bg-zinc-950 text-red-400 border border-zinc-800 focus:border-red-500 focus:outline-none rounded py-1.5 px-2 text-xs font-sans font-medium hover:border-zinc-700 transition cursor-pointer"
                   id="campaign-realm-selector"
                 >
                   {campaigns.map((c) => (
@@ -610,14 +610,14 @@ export default function App() {
 
           <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-905/10">
             <div className="flex items-center gap-1.5">
-              <Scroll className="w-4 h-4 text-amber-505" />
+              <Scroll className="w-4 h-4 text-red-500" />
               <span className="text-xs uppercase font-fantasy tracking-wider font-semibold text-zinc-300">
                 CAMPAIGN CHAPTERS
               </span>
             </div>
             <button
               onClick={() => setShowCreateModal(true)}
-              className="p-1.5 bg-amber-500/15 text-amber-400 hover:bg-amber-500 hover:text-zinc-950 rounded transition border border-amber-500/30"
+              className="p-1.5 bg-red-500/15 text-red-400 hover:bg-red-500 hover:text-zinc-950 rounded transition border border-red-500/30"
               id="btn-sidebar-plus-char"
               title="Add Campaign Session"
             >
@@ -650,7 +650,7 @@ export default function App() {
                     }}
                     className={`group w-full p-3.5 text-left rounded border transition flex items-center justify-between cursor-pointer ${
                       selectedSession?.id === item.id
-                        ? "bg-amber-500/10 border-amber-500/40 text-amber-400 parchment-glow"
+                        ? "bg-red-500/10 border-red-500/40 text-red-400 parchment-glow"
                         : "bg-zinc-900/40 border-zinc-850 hover:bg-zinc-900 hover:border-zinc-700 text-zinc-300"
                     }`}
                     id={`side-session-${item.id}`}
@@ -676,7 +676,7 @@ export default function App() {
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
-                      <ChevronRight className="w-4 h-4 text-zinc-600 group-hover:text-amber-500" />
+                      <ChevronRight className="w-4 h-4 text-zinc-600 group-hover:text-red-500" />
                     </div>
                   </div>
                 ))
@@ -693,14 +693,14 @@ export default function App() {
             return (
               <div className="p-4 bg-zinc-900/60 border border-zinc-800 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs leading-relaxed shadow-lg">
                 <div className="space-y-1">
-                  <div className="flex items-center gap-1 text-amber-500 font-mono text-[10px] uppercase font-bold tracking-widest">
+                  <div className="flex items-center gap-1 text-red-500 font-mono text-[10px] uppercase font-bold tracking-widest">
                     <Scroll className="w-3.5 h-3.5 animate-pulse" /> Active Campaign Environment
                   </div>
                   <h2 className="font-fantasy font-black text-base sm:text-lg text-zinc-100 tracking-wider uppercase">
                     {activeCamp.name}
                   </h2>
                   <p className="text-zinc-400 font-sans">
-                    <span className="text-amber-400/90 font-mono text-[10px] uppercase font-bold">Edition:</span> {activeCamp.setting || "D&D 5e / Custom"}
+                    <span className="text-red-400/90 font-mono text-[10px] uppercase font-bold">Edition:</span> {activeCamp.setting || "D&D 5e / Custom"}
                   </p>
                   {activeCamp.description && (
                     <p className="text-zinc-500 italic max-w-3xl mt-1 text-[11px] font-sans leading-normal line-clamp-2">
@@ -716,7 +716,7 @@ export default function App() {
                       setEditCampaignDesc(activeCamp.description || "");
                       setShowEditCampaignModal(true);
                     }}
-                    className="px-3 py-1.5 bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-amber-400 hover:text-amber-300 rounded text-[11px] font-sans font-bold transition flex items-center gap-1"
+                    className="px-3 py-1.5 bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-red-400 hover:text-red-300 rounded text-[11px] font-sans font-bold transition flex items-center gap-1"
                     id="btn-edit-lore"
                   >
                     <Edit className="w-3 h-3" /> Lore Details
@@ -743,8 +743,8 @@ export default function App() {
                 className="h-full flex flex-col items-center justify-center text-center p-8 bg-zinc-900/10 border border-zinc-850 rounded-lg min-h-[400px]"
                 id="empty-welcome-panel"
               >
-                <div className="inline-flex p-3 bg-zinc-900 border border-zinc-800 rounded-full mb-3 text-amber-500 max-w-max mx-auto shadow-md">
-                  <Compass className="w-10 h-10 animate-spin-slow text-amber-500" />
+                <div className="inline-flex p-3 bg-zinc-900 border border-zinc-800 rounded-full mb-3 text-red-500 max-w-max mx-auto shadow-md">
+                  <Compass className="w-10 h-10 animate-spin-slow text-red-500" />
                 </div>
                 <h2 className="font-fantasy font-bold text-lg text-zinc-200 uppercase tracking-widest">
                   Ready to Scribe, DM?
@@ -754,7 +754,7 @@ export default function App() {
                 </p>
                 <button
                   onClick={() => setShowCreateModal(true)}
-                  className="mt-4 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-sans font-bold text-xs rounded transition active:scale-95 cursor-pointer flex items-center gap-1.5"
+                  className="mt-4 px-4 py-2 bg-red-500 hover:bg-red-600 text-zinc-950 font-sans font-bold text-xs rounded transition active:scale-95 cursor-pointer flex items-center gap-1.5"
                   id="btn-empty-add-character"
                 >
                   <Plus className="w-4 h-4" /> Begin New Session Chapter
@@ -772,14 +772,14 @@ export default function App() {
                 {/* Meta details Header banner */}
                 <div className="p-5 bg-zinc-900 border border-zinc-800 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-4 parchment-glow">
                   <div className="space-y-1">
-                    <span className="text-[10px] font-mono text-amber-500 tracking-widest uppercase font-bold flex items-center gap-1">
+                    <span className="text-[10px] font-mono text-red-500 tracking-widest uppercase font-bold flex items-center gap-1">
                       <Scroll className="w-3.5 h-3.5" /> ACTIVE STORY LEDGER
                     </span>
                     <input
                       type="text"
                       value={sessionTitle}
                       onChange={(e) => setSessionTitle(e.target.value)}
-                      className="font-fantasy font-extrabold text-xl sm:text-2xl text-zinc-100 tracking-wide bg-transparent border-b border-transparent focus:border-amber-500 focus:outline-none focus:bg-zinc-950/20 px-1 transition"
+                      className="font-fantasy font-extrabold text-xl sm:text-2xl text-zinc-100 tracking-wide bg-transparent border-b border-transparent focus:border-red-500 focus:outline-none focus:bg-zinc-950/20 px-1 transition"
                     />
                     <div className="flex items-center gap-2 mt-1">
                       <Calendar className="w-3.5 h-3.5 text-zinc-500" />
@@ -796,7 +796,7 @@ export default function App() {
                     <button
                       onClick={saveSessionChanges}
                       disabled={notesSaving}
-                      className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-sans font-bold text-xs sm:text-sm rounded transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="px-4 py-2.5 bg-red-500 hover:bg-red-600 text-zinc-950 font-sans font-bold text-xs sm:text-sm rounded transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
                       id="btn-save-meta-ledger"
                     >
                       {notesSaving ? (
@@ -819,7 +819,7 @@ export default function App() {
                     <div className="space-y-3">
                       <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
                         <div className="flex items-center gap-2">
-                          <Edit className="w-5 h-5 text-amber-500 animate-pulse" />
+                          <Edit className="w-5 h-5 text-red-500 animate-pulse" />
                           <h3 className="font-fantasy font-semibold text-zinc-100 tracking-wider text-base uppercase">
                             Adventure Log & Scribe Ledger
                           </h3>
@@ -834,21 +834,21 @@ export default function App() {
                         <span className="text-[10px] text-zinc-400 font-mono">Inject template:</span>
                         <button
                           onClick={() => injectTemplate("combat")}
-                          className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-amber-500 hover:text-amber-400 rounded transition cursor-pointer"
+                          className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-red-500 hover:text-red-400 rounded transition cursor-pointer"
                           id="btn-template-combat"
                         >
                           ⚔️ Combat Tracker
                         </button>
                         <button
                           onClick={() => injectTemplate("npc")}
-                          className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-amber-500 hover:text-amber-400 rounded transition cursor-pointer"
+                          className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-red-500 hover:text-red-400 rounded transition cursor-pointer"
                           id="btn-template-npc"
                         >
                           👤 Improv NPC
                         </button>
                         <button
                           onClick={() => injectTemplate("loot")}
-                          className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-amber-500 hover:text-amber-400 rounded transition cursor-pointer"
+                          className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-red-500 hover:text-red-400 rounded transition cursor-pointer"
                           id="btn-template-loot"
                         >
                           🪙 Gold / Magic Loot
@@ -860,7 +860,7 @@ export default function App() {
                         onChange={(e) => setNotes(e.target.value)}
                         placeholder="Detail story happenings, dice rolls, campaigns events, player dialogue..."
                         rows={12}
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded p-4 text-zinc-200 text-sm font-sans focus:outline-none focus:border-amber-500 font-sans leading-relaxed transition"
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded p-4 text-zinc-200 text-sm font-sans focus:outline-none focus:border-red-500 font-sans leading-relaxed transition"
                         id="raw-notes-notepad"
                       />
                     </div>
@@ -869,7 +869,7 @@ export default function App() {
                       <button
                         onClick={saveSessionChanges}
                         disabled={notesSaving}
-                        className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-amber-400 rounded text-xs transition font-semibold"
+                        className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-red-400 rounded text-xs transition font-semibold"
                         id="btn-quick-save-notes"
                       >
                         {notesSaving ? "Saving Ledger..." : "💾 Quick Save Logs"}
@@ -894,7 +894,7 @@ export default function App() {
 
                     {/* Integrated summaries triggers */}
                     <div className="p-5 bg-zinc-900 border border-zinc-800 rounded-lg parchment-glow text-center space-y-4">
-                      <div className="flex items-center gap-1.5 justify-center text-amber-500">
+                      <div className="flex items-center gap-1.5 justify-center text-red-500">
                         <Wand2 className="w-5 h-5 animate-spin-slow" />
                         <h4 className="font-fantasy font-bold tracking-wider text-sm uppercase">
                           AI Chronological Synthesis
@@ -906,7 +906,7 @@ export default function App() {
                       <button
                         onClick={generateAISummary}
                         disabled={summarizing}
-                        className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-zinc-800 disabled:text-zinc-500 text-zinc-950 font-sans font-bold text-xs sm:text-sm rounded transition active:scale-95 flex items-center justify-center gap-1.5 mx-auto cursor-pointer"
+                        className="px-4 py-2 bg-red-500 hover:bg-red-600 disabled:bg-zinc-800 disabled:text-zinc-500 text-zinc-950 font-sans font-bold text-xs sm:text-sm rounded transition active:scale-95 flex items-center justify-center gap-1.5 mx-auto cursor-pointer"
                         id="btn-ai-synthesize"
                       >
                         {summarizing ? (
@@ -925,18 +925,18 @@ export default function App() {
 
                 {/* AI Summary Display Container - Parchment paper styling */}
                 <div className="p-6 md:p-8 bg-zinc-900 border border-zinc-800 rounded-lg parchment-glow relative" id="summary-section">
-                  <div className="absolute top-0 left-0 w-2 h-20 bg-amber-500/20" />
-                  <div className="absolute top-0 left-0 w-20 h-2 bg-amber-500/20" />
+                  <div className="absolute top-0 left-0 w-2 h-20 bg-red-500/20" />
+                  <div className="absolute top-0 left-0 w-20 h-2 bg-red-500/20" />
                   
                   <div className="flex justify-between items-center border-b border-zinc-800 pb-4 mb-4">
                     <div className="flex items-center gap-2">
-                      <Scroll className="w-6 h-6 text-amber-500 animate-pulse" />
+                      <Scroll className="w-6 h-6 text-red-500 animate-pulse" />
                       <h3 className="font-fantasy font-bold text-base md:text-lg tracking-wider text-zinc-100 uppercase">
                         📜 CHRONICLE SUMMARY & SPELLBOOK NOTES
                       </h3>
                     </div>
                     {summarizing && (
-                      <span className="text-xs text-amber-500 flex items-center gap-1.5 font-sans italic animate-pulse">
+                      <span className="text-xs text-red-500 flex items-center gap-1.5 font-sans italic animate-pulse">
                         <Loader2 className="w-3.5 h-3.5 animate-spin" /> Scribing timeline...
                       </span>
                     )}
@@ -1002,9 +1002,9 @@ export default function App() {
             className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-lg p-6 shadow-2xl relative"
             id="creation-modal-dialog"
           >
-            <div className="absolute top-0 left-0 w-12 h-12 border-t-2 border-l-2 border-amber-500/20" />
+            <div className="absolute top-0 left-0 w-12 h-12 border-t-2 border-l-2 border-red-500/20" />
             
-            <h2 className="font-fantasy font-extrabold text-base uppercase text-amber-400 tracking-wider mb-4 border-b border-zinc-800 pb-2">
+            <h2 className="font-fantasy font-extrabold text-base uppercase text-red-400 tracking-wider mb-4 border-b border-zinc-800 pb-2">
               📕 Initiate Campaign Chapter
             </h2>
 
@@ -1019,7 +1019,7 @@ export default function App() {
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
                   placeholder="The Crypts of Strahd, Slumbering Kraken..."
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-700 focus:outline-none focus:border-amber-500 font-sans"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-700 focus:outline-none focus:border-red-500 font-sans"
                   id="new-session-title-input"
                 />
               </div>
@@ -1033,7 +1033,7 @@ export default function App() {
                   required
                   value={newDate}
                   onChange={(e) => setNewDate(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-amber-500 font-sans"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-red-500 font-sans"
                 />
               </div>
 
@@ -1047,7 +1047,7 @@ export default function App() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-sans font-bold text-xs rounded transition uppercase tracking-wide cursor-pointer"
+                  className="px-4 py-2 bg-red-500 hover:bg-red-600 text-zinc-950 font-sans font-bold text-xs rounded transition uppercase tracking-wide cursor-pointer"
                   id="btn-create-chapter-confirm"
                 >
                   Summon Scroll
@@ -1067,9 +1067,9 @@ export default function App() {
             className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-lg p-6 shadow-2xl relative"
             id="create-campaign-modal"
           >
-            <div className="absolute top-0 left-0 w-12 h-12 border-t-2 border-l-2 border-amber-500/20" />
+            <div className="absolute top-0 left-0 w-12 h-12 border-t-2 border-l-2 border-red-500/20" />
             
-            <h2 className="font-fantasy font-extrabold text-base uppercase text-amber-400 tracking-wider mb-4 border-b border-zinc-800 pb-2">
+            <h2 className="font-fantasy font-extrabold text-base uppercase text-red-400 tracking-wider mb-4 border-b border-zinc-800 pb-2">
               🏰 Forge New Campaign Realm
             </h2>
 
@@ -1084,7 +1084,7 @@ export default function App() {
                   value={newCampaignName}
                   onChange={(e) => setNewCampaignName(e.target.value)}
                   placeholder="e.g. Curse of Strahd, Eberron Legacy..."
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-700 focus:outline-none focus:border-amber-500 font-sans"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-700 focus:outline-none focus:border-red-500 font-sans"
                   id="new-campaign-name-input"
                 />
               </div>
@@ -1098,7 +1098,7 @@ export default function App() {
                   value={newCampaignSetting}
                   onChange={(e) => setNewCampaignSetting(e.target.value)}
                   placeholder="e.g. D&D 5e, Pathfinder 2e, Custom Lore..."
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-700 focus:outline-none focus:border-amber-500 font-sans"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-700 focus:outline-none focus:border-red-500 font-sans"
                   id="new-campaign-setting-input"
                 />
               </div>
@@ -1112,7 +1112,7 @@ export default function App() {
                   onChange={(e) => setNewCampaignDesc(e.target.value)}
                   placeholder="Brief synopsis of the main quest, continents, or major factions..."
                   rows={3}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-700 focus:outline-none focus:border-amber-500 font-sans resize-none"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-700 focus:outline-none focus:border-red-500 font-sans resize-none"
                   id="new-campaign-desc-input"
                 />
               </div>
@@ -1121,13 +1121,13 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setShowCreateCampaignModal(false)}
-                  className="px-3.5 py-2 bg-zinc-800 text-zinc-300 rounded font-sans text-xs transition hover:bg-zinc-700 cursor-pointer"
+                  className="px-3.5 py-2 bg-zinc-850 hover:bg-zinc-800 text-zinc-300 rounded font-sans text-xs transition cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-sans font-bold text-xs rounded transition uppercase tracking-wide cursor-pointer"
+                  className="px-4 py-2 bg-red-500 hover:bg-red-600 text-zinc-950 font-sans font-bold text-xs rounded transition uppercase tracking-wide cursor-pointer"
                   id="btn-create-campaign-confirm"
                 >
                   Conjure Realm
@@ -1147,9 +1147,9 @@ export default function App() {
             className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-lg p-6 shadow-2xl relative"
             id="edit-campaign-modal"
           >
-            <div className="absolute top-0 left-0 w-12 h-12 border-t-2 border-l-2 border-amber-500/20" />
+            <div className="absolute top-0 left-0 w-12 h-12 border-t-2 border-l-2 border-red-500/20" />
             
-            <h2 className="font-fantasy font-extrabold text-base uppercase text-amber-400 tracking-wider mb-4 border-b border-zinc-800 pb-2">
+            <h2 className="font-fantasy font-extrabold text-base uppercase text-red-400 tracking-wider mb-4 border-b border-zinc-800 pb-2">
               📜 Morph Campaign Details
             </h2>
 
@@ -1163,7 +1163,7 @@ export default function App() {
                   required
                   value={editCampaignName}
                   onChange={(e) => setEditCampaignName(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-amber-500 font-sans"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-red-500 font-sans"
                   id="edit-campaign-name-input"
                 />
               </div>
@@ -1176,7 +1176,7 @@ export default function App() {
                   type="text"
                   value={editCampaignSetting}
                   onChange={(e) => setEditCampaignSetting(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-amber-500 font-sans"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-red-500 font-sans"
                   id="edit-campaign-setting-input"
                 />
               </div>
@@ -1189,7 +1189,7 @@ export default function App() {
                   value={editCampaignDesc}
                   onChange={(e) => setEditCampaignDesc(e.target.value)}
                   rows={3}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-amber-500 font-sans resize-none"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-red-500 font-sans resize-none"
                   id="edit-campaign-desc-input"
                 />
               </div>
@@ -1198,13 +1198,13 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setShowEditCampaignModal(false)}
-                  className="px-3.5 py-2 bg-zinc-800 text-zinc-300 rounded font-sans text-xs transition hover:bg-zinc-700 cursor-pointer"
+                  className="px-3.5 py-2 bg-zinc-805 hover:bg-zinc-800 text-zinc-300 rounded font-sans text-xs transition cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-sans font-bold text-xs rounded transition uppercase tracking-wide cursor-pointer"
+                  className="px-4 py-2 bg-red-500 hover:bg-red-600 text-zinc-950 font-sans font-bold text-xs rounded transition uppercase tracking-wide cursor-pointer"
                   id="btn-edit-campaign-confirm"
                 >
                   Engrave Changes

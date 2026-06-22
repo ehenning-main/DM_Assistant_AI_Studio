@@ -39,14 +39,14 @@ export function CharacterTracker({ characters = [], onChange }: CharacterTracker
     <div className="space-y-4 p-5 bg-zinc-900 border border-zinc-800 rounded-lg parchment-glow" id="character-tracker">
       <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
         <div className="flex items-center gap-2">
-          <Shield className="w-5 h-5 text-amber-500 animate-pulse" />
+          <Shield className="w-5 h-5 text-red-500 animate-pulse" />
           <h3 className="font-fantasy font-semibold text-zinc-100 tracking-wider text-base">
             CODEX OF ACTIVE SOULS (NPCs & Heroes)
           </h3>
         </div>
         <button
           onClick={() => setShowAddForm(!showAddForm)}
-          className="flex items-center gap-1.5 px-3 py-1 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-sans font-medium text-xs rounded transition active:scale-95 cursor-pointer"
+          className="flex items-center gap-1.5 px-3 py-1 bg-red-500 hover:bg-red-600 text-zinc-950 font-sans font-medium text-xs rounded transition active:scale-95 cursor-pointer"
           id="btn-toggle-character-form"
         >
           <Plus className="w-3.5 h-3.5" /> Summon Persona
@@ -66,7 +66,7 @@ export function CharacterTracker({ characters = [], onChange }: CharacterTracker
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Balasar, Elara, Strahd..."
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-650 focus:outline-none focus:border-amber-500 font-sans"
+                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-650 focus:outline-none focus:border-red-500 font-sans"
               />
             </div>
             
@@ -77,7 +77,7 @@ export function CharacterTracker({ characters = [], onChange }: CharacterTracker
               <select
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-amber-500 font-sans cursor-pointer"
+                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-red-500 font-sans cursor-pointer"
               >
                 <option value="NPC Ally">🛡️ NPC Ally</option>
                 <option value="Boss Villain">💀 Boss Villain</option>
@@ -97,7 +97,7 @@ export function CharacterTracker({ characters = [], onChange }: CharacterTracker
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="A secretive tavern rogue with a glass eye, hides a sapphire key..."
-              className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-650 focus:outline-none focus:border-amber-500 font-sans"
+              className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-650 focus:outline-none focus:border-red-500 font-sans"
             />
           </div>
 
@@ -111,7 +111,7 @@ export function CharacterTracker({ characters = [], onChange }: CharacterTracker
             </button>
             <button
               type="submit"
-              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-zinc-905 text-zinc-950 font-sans font-medium text-xs rounded transition"
+              className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-zinc-905 text-zinc-950 font-sans font-medium text-xs rounded transition"
             >
               Add Soul
             </button>
@@ -135,7 +135,7 @@ export function CharacterTracker({ characters = [], onChange }: CharacterTracker
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
-                className="group p-3 bg-zinc-950 border border-zinc-850 rounded hover:border-amber-500/30 transition flex flex-col justify-between"
+                className="group p-3 bg-zinc-950 border border-zinc-850 rounded hover:border-red-500/30 transition flex flex-col justify-between"
                 id={`character-badge-${char.id}`}
               >
                 <div>
@@ -143,7 +143,7 @@ export function CharacterTracker({ characters = [], onChange }: CharacterTracker
                     <span className="font-fantasy font-semibold text-zinc-200 text-xs sm:text-sm">
                       {char.name}
                     </span>
-                    <span className="text-[9px] font-mono px-2 py-0.5 bg-zinc-900 border border-zinc-800 text-amber-500 rounded font-semibold">
+                    <span className="text-[9px] font-mono px-2 py-0.5 bg-zinc-900 border border-zinc-800 text-red-500 rounded font-semibold">
                       {char.role}
                     </span>
                   </div>
