@@ -12,8 +12,7 @@ export async function fetchAllCampaigns(userId: string): Promise<Campaign[]> {
     try {
       const q = query(
         collection(db, path),
-        where("userId", "==", userId),
-        orderBy("updatedAt", "desc")
+        where("userId", "==", userId)
       );
       const snapshot = await getDocs(q);
       const list: Campaign[] = [];
@@ -25,7 +24,7 @@ export async function fetchAllCampaigns(userId: string): Promise<Campaign[]> {
           updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : (data.updatedAt || new Date().toISOString()),
         } as Campaign);
       });
-      return list;
+      return list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, path);
       return [];
@@ -154,8 +153,7 @@ export async function fetchAllSessions(userId: string): Promise<Session[]> {
     try {
       const q = query(
         collection(db, path),
-        where("userId", "==", userId),
-        orderBy("updatedAt", "desc")
+        where("userId", "==", userId)
       );
       const snapshot = await getDocs(q);
       const list: Session[] = [];
@@ -168,7 +166,7 @@ export async function fetchAllSessions(userId: string): Promise<Session[]> {
           updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : (data.updatedAt || new Date().toISOString()),
         } as Session);
       });
-      return list;
+      return list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, path);
       return [];

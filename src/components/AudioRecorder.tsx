@@ -200,18 +200,18 @@ export function AudioRecorder({
     <div className="space-y-4 p-5 bg-zinc-900 border border-zinc-800 rounded-lg parchment-glow" id="audio-panel-root">
       <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
         <div className="flex items-center gap-2">
-          <Mic className="w-5 h-5 text-amber-500 animate-pulse" />
+          <Mic className="w-5 h-5 text-red-500 animate-pulse" />
           <h3 className="font-fantasy font-semibold text-zinc-100 tracking-wider text-base">
             ORATOR'S TOMB (Integrated Audio Notes)
           </h3>
         </div>
-        <span className="font-mono text-[10px] bg-amber-500/10 text-amber-500 border border-amber-500/30 px-2 py-0.5 rounded uppercase">
+        <span className="font-mono text-[10px] bg-red-500/10 text-red-500 border border-red-500/30 px-2 py-0.5 rounded uppercase">
           Live scribe
         </span>
       </div>
 
       {permissionError && (
-        <div className="flex gap-2 items-start p-3 bg-amber-500/5 border border-amber-500/20 rounded text-amber-300 text-xs">
+        <div className="flex gap-2 items-start p-3 bg-red-500/5 border border-red-500/20 rounded text-red-300 text-xs">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
           <p>{permissionError}</p>
         </div>
@@ -242,11 +242,11 @@ export function AudioRecorder({
           <div className="flex gap-2 items-center">
             <button
               onClick={togglePlayback}
-              className="p-2.5 bg-zinc-800 hover:bg-zinc-750 text-amber-400 rounded transition border border-zinc-700"
+              className="p-2.5 bg-zinc-800 hover:bg-zinc-750 text-red-400 rounded transition border border-zinc-700"
               id="btn-audio-playback"
               title="Play recording"
             >
-              {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 fill-amber-400" />}
+              {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 fill-red-400" />}
             </button>
             <audio
               ref={audioPlayerRef}
@@ -257,7 +257,7 @@ export function AudioRecorder({
             {audioBlob && (
               <button
                 onClick={() => transcribeAudio(audioBlob)}
-                className="flex items-center gap-1.5 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-sans font-medium text-xs md:text-sm rounded transition active:scale-95 cursor-pointer"
+                className="flex items-center gap-1.5 px-4 py-2.5 bg-red-500 hover:bg-red-600 text-zinc-950 font-sans font-medium text-xs md:text-sm rounded transition active:scale-95 cursor-pointer"
                 disabled={transcribing}
                 id="btn-audio-transcribe"
               >
@@ -279,7 +279,7 @@ export function AudioRecorder({
       {/* Tome of Echoes: Preset Fantasy Simulations */}
       <div className="bg-zinc-950/60 p-4 border border-zinc-800/80 rounded">
         <div className="flex items-center gap-2 text-zinc-400 font-sans text-xs mb-3 font-semibold uppercase tracking-wider">
-          <Volume2 className="w-4 h-4 text-amber-500" />
+          <Volume2 className="w-4 h-4 text-red-500" />
           <span>Tome of Echoes (Test Simulation)</span>
         </div>
         <p className="text-zinc-400 text-xs mb-3">
@@ -289,28 +289,28 @@ export function AudioRecorder({
           <button
             onClick={() => simulateGameAudio(1)}
             disabled={transcribing}
-            className="p-2 text-left bg-zinc-90 w-full hover:bg-zinc-800/80 rounded border border-zinc-800 hover:border-zinc-700 transition text-zinc-300 text-xs hover:text-amber-400 font-sans cursor-pointer disabled:opacity-50"
+            className="p-2 text-left bg-zinc-90 w-full hover:bg-zinc-800/80 rounded border border-zinc-800 hover:border-zinc-700 transition text-zinc-300 text-xs hover:text-red-400 font-sans cursor-pointer disabled:opacity-50"
             id="simulator-audio-1"
           >
-            ⚔️ <span className="font-semibold block text-[11px] text-amber-500">Lord Strahd Crypt</span>
+            ⚔️ <span className="font-semibold block text-[11px] text-red-500">Lord Strahd Crypt</span>
             Skirmish initiative, skeletal sentinels...
           </button>
           <button
             onClick={() => simulateGameAudio(2)}
             disabled={transcribing}
-            className="p-2 text-left bg-zinc-90 w-full hover:bg-zinc-800/80 rounded border border-zinc-800 hover:border-zinc-700 transition text-zinc-300 text-xs hover:text-amber-400 font-sans cursor-pointer disabled:opacity-50"
+            className="p-2 text-left bg-zinc-90 w-full hover:bg-zinc-800/80 rounded border border-zinc-800 hover:border-zinc-700 transition text-zinc-300 text-xs hover:text-red-400 font-sans cursor-pointer disabled:opacity-50"
             id="simulator-audio-2"
           >
-            🌲 <span className="font-semibold block text-[11px] text-amber-500">Sapphire Archive</span>
+            🌲 <span className="font-semibold block text-[11px] text-red-500">Sapphire Archive</span>
             Potion shopping, elven elder maps...
           </button>
           <button
             onClick={() => simulateGameAudio(3)}
             disabled={transcribing}
-            className="p-2 text-left bg-zinc-90 w-full hover:bg-zinc-800/80 rounded border border-zinc-800 hover:border-zinc-700 transition text-zinc-300 text-xs hover:text-amber-400 font-sans cursor-pointer disabled:opacity-50"
+            className="p-2 text-left bg-zinc-90 w-full hover:bg-zinc-800/80 rounded border border-zinc-800 hover:border-zinc-700 transition text-zinc-300 text-xs hover:text-red-400 font-sans cursor-pointer disabled:opacity-50"
             id="simulator-audio-3"
           >
-            ⚓ <span className="font-semibold block text-[11px] text-amber-500">Dockside Raid</span>
+            ⚓ <span className="font-semibold block text-[11px] text-red-500">Dockside Raid</span>
             Pirate ballistas, gold robbery...
           </button>
         </div>
