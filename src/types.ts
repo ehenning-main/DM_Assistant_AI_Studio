@@ -29,6 +29,8 @@ export interface Campaign {
   setting: string;
   description: string;
   heroes?: HeroCharacter[];
+  dndBeyondUrl?: string;
+  dndBeyondNotes?: string;
   createdAt: any;
   updatedAt: any;
 }

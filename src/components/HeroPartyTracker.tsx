@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { 
   User, Plus, Trash2, Shield, Heart, Sparkles, TrendingUp, Gem, 
   ChevronRight, Edit, Save, Calendar, Award, Users, Check, X, 
-  Flame, HelpCircle, Swords, Scroll, Info, AlertCircle
+  Flame, HelpCircle, Swords, Scroll, Info, AlertCircle, Link2, Globe, RefreshCw, FileText
 } from "lucide-react";
 import { HeroCharacter, HeroProgressionRecord, Campaign } from "../types";
 import { motion, AnimatePresence } from "motion/react";
@@ -82,6 +82,29 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
   const [progressValue, setProgressValue] = useState("");
   const [progressNotes, setProgressNotes] = useState("");
   const [progressDate, setProgressDate] = useState(new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }));
+
+  // D&D Beyond Integration States
+  const [dndBeyondUrl, setDndBeyondUrl] = useState(campaign.dndBeyondUrl || "");
+  const [pastedHtml, setPastedHtml] = useState("");
+  const [showPasteFallback, setShowPasteFallback] = useState(false);
+  const [dndSyncLoading, setDndSyncLoading] = useState(false);
+  const [syncLogs, setSyncLogs] = useState<string[]>([]);
+  const [syncNotes, setSyncNotes] = useState<string | null>(campaign.dndBeyondNotes || null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncSuccessMessage, setSyncSuccessMessage] = useState<string | null>(null);
+
+  // Derive state reset when active campaign changes
+  const [currentCampaignId, setCurrentCampaignId] = useState(campaign.id);
+  if (campaign.id !== currentCampaignId) {
+    setCurrentCampaignId(campaign.id);
+    setDndBeyondUrl(campaign.dndBeyondUrl || "");
+    setSyncNotes(campaign.dndBeyondNotes || null);
+    setPastedHtml("");
+    setSyncLogs([]);
+    setSyncError(null);
+    setSyncSuccessMessage(null);
+    setShowPasteFallback(false);
+  }
 
   // Helper inside Component to track updated campaigns
   async function updateHeroes(updatedList: HeroCharacter[]) {
@@ -274,6 +297,221 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
     });
   }
 
+  // Synchronize campaign characters & notes with D&D Beyond API endpoint
+  async function performDndBeyondSync(targetUrl: string, rawHtml?: string) {
+    setDndSyncLoading(true);
+    setSyncError(null);
+    setSyncSuccessMessage(null);
+    setSyncLogs([]);
+
+    try {
+      const payload: any = {};
+      if (rawHtml) {
+        payload.pastedHtml = rawHtml;
+      } else {
+        payload.campaignUrl = targetUrl;
+      }
+
+      console.log("[DND Beyond Link Sync] Submitting parse request...", targetUrl);
+      const response = await fetch("/api/parse-dndbeyond", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Oracle server responded with status: ${response.status}`);
+      }
+
+      const parsedData = await response.json();
+
+      if (parsedData.fallbackNeeded) {
+        setSyncError(parsedData.message);
+        setShowPasteFallback(true);
+        setDndSyncLoading(false);
+        return;
+      }
+
+      // Check if we retrieved characters
+      const characters = parsedData.characters || [];
+      const logs: string[] = [];
+      let updatedHeroes = [...heroesList];
+
+      for (const pc of characters) {
+        const existingIndex = updatedHeroes.findIndex(h => h.name.toLowerCase() === pc.name.toLowerCase());
+        
+        if (existingIndex !== -1) {
+          const orig = updatedHeroes[existingIndex];
+          const syncId = "sync_" + Date.now() + "_" + Math.random().toString(36).substring(2, 5);
+          
+          const updatesDesc: string[] = [];
+          if (orig.level !== pc.level) {
+            updatesDesc.push(`Level advanced: ${orig.level} -> ${pc.level}`);
+          }
+          if (orig.maxHp !== pc.maxHp) {
+            updatesDesc.push(`Max HP adjusted: ${orig.maxHp} -> ${pc.maxHp}`);
+          }
+          if (orig.ac !== pc.ac) {
+            updatesDesc.push(`Armor Class updated: ${orig.ac} -> ${pc.ac}`);
+          }
+
+          // merge magic items
+          const existingItemsLower = (orig.magicItems || []).map(i => i.toLowerCase());
+          const newItems = (pc.magicItems || []).filter((item: string) => !existingItemsLower.includes(item.toLowerCase()));
+          if (newItems.length > 0) {
+            updatesDesc.push(`Attuned magic relics: ${newItems.join(", ")}`);
+          }
+
+          const mergedItems = [...(orig.magicItems || []), ...newItems];
+
+          const updatedHero: HeroCharacter = {
+            ...orig,
+            classType: pc.classType || orig.classType,
+            level: pc.level || orig.level,
+            maxHp: pc.maxHp || orig.maxHp,
+            currentHp: pc.maxHp || orig.currentHp,
+            ac: pc.ac || orig.ac,
+            alignment: pc.alignment || orig.alignment || "Neutral",
+            playerName: pc.playerName && pc.playerName !== "N/A" ? pc.playerName : orig.playerName || "Companion",
+            strength: pc.strength || orig.strength || 10,
+            dexterity: pc.dexterity || orig.dexterity || 10,
+            constitution: pc.constitution || orig.constitution || 10,
+            intelligence: pc.intelligence || orig.intelligence || 10,
+            wisdom: pc.wisdom || orig.wisdom || 10,
+            charisma: pc.charisma || orig.charisma || 10,
+            magicItems: mergedItems,
+            history: [
+              ...(orig.history || []),
+              {
+                id: syncId,
+                type: "level",
+                value: `D&D Beyond Sync (Level ${pc.level} ${pc.classType})`,
+                date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+                notes: updatesDesc.length > 0 
+                  ? `Synced stats: ${updatesDesc.join("; ")}`
+                  : "Verified companion properties against active D&D Beyond roster; aligned and healthy."
+              }
+            ]
+          };
+
+          updatedHeroes[existingIndex] = updatedHero;
+          logs.push(`🛡️ Aligned **${pc.name}** (Level ${pc.level} ${pc.classType})${updatesDesc.length > 0 ? ` - *Updates*: ${updatesDesc.join(", ")}` : " - *Unchanged*"}`);
+        } else {
+          // Add new hero character completely
+          const newId = "hero_" + Math.random().toString(36).substring(2, 11);
+          const syncId = "sync_init_" + Date.now() + "_" + Math.random().toString(36).substring(2, 5);
+          
+          const newHero: HeroCharacter = {
+            id: newId,
+            name: pc.name,
+            classType: pc.classType || "Fighter",
+            level: pc.level || 1,
+            maxHp: pc.maxHp || 10,
+            currentHp: pc.maxHp || 10,
+            ac: pc.ac || 10,
+            alignment: pc.alignment || "Neutral",
+            playerName: pc.playerName && pc.playerName !== "N/A" ? pc.playerName : "Companion",
+            strength: pc.strength || 10,
+            dexterity: pc.dexterity || 10,
+            constitution: pc.constitution || 10,
+            intelligence: pc.intelligence || 10,
+            wisdom: pc.wisdom || 10,
+            charisma: pc.charisma || 10,
+            magicItems: pc.magicItems || [],
+            activeStatus: "Healthy",
+            history: [
+              {
+                id: syncId,
+                type: "level",
+                value: `Imported Level ${pc.level} ${pc.classType}`,
+                date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+                notes: "Companion created and stats populated from linked D&D Beyond campaign roster."
+              }
+            ]
+          };
+
+          updatedHeroes.push(newHero);
+          logs.push(`✨ Imported **${pc.name}** (Level ${pc.level} ${pc.classType}) as a new Heroes of the Realm companion!`);
+          if (pc.magicItems && pc.magicItems.length > 0) {
+            logs.push(`   *Magic treasures linked*: ${pc.magicItems.join(", ")}`);
+          }
+        }
+      }
+
+      // Update parent Campaign
+      const updatedCamp: Campaign = {
+        ...campaign,
+        name: parsedData.campaignName || campaign.name,
+        description: parsedData.description && parsedData.description !== "N/A" ? parsedData.description : campaign.description,
+        dndBeyondUrl: targetUrl,
+        dndBeyondNotes: parsedData.notes && parsedData.notes !== "N/A" ? parsedData.notes : campaign.dndBeyondNotes,
+        heroes: updatedHeroes,
+        updatedAt: new Date().toISOString()
+      };
+
+      await onUpdateCampaign(updatedCamp);
+      setSyncNotes(parsedData.notes && parsedData.notes !== "N/A" ? parsedData.notes : null);
+      setSyncSuccessMessage(`Successfully synchronized with campaign "${parsedData.campaignName || campaign.name}"!`);
+      setSyncLogs(logs);
+      setPastedHtml("");
+      setShowPasteFallback(false);
+
+      // Select first hero if none was elected yet
+      if (updatedHeroes.length > 0) {
+        setSelectedHeroId(updatedHeroes[0].id);
+      }
+    } catch (err: any) {
+      console.error("[DND Beyond Link Sync] Sync task failed:", err);
+      setSyncError(`Failed to synchronize with campaign: ${err.message || err}. Ensure you pasted valid HTML page source if using manual synchronization.`);
+    } finally {
+      setDndSyncLoading(false);
+    }
+  }
+
+  // Trigger sync via URL
+  async function handleSyncDndBeyond() {
+    if (!dndBeyondUrl.trim()) {
+      setSyncError("Please supply a valid D&D Beyond campaign URL (e.g. https://www.dndbeyond.com/campaigns/123456).");
+      return;
+    }
+    await performDndBeyondSync(dndBeyondUrl.trim());
+  }
+
+  // Trigger sync via pasted HTML
+  async function handleSyncWithPastedHtml() {
+    if (!pastedHtml.trim()) {
+      setSyncError("Roster scroll is barren. Please paste your campaign webpage source HTML first.");
+      return;
+    }
+    await performDndBeyondSync(dndBeyondUrl.trim() || "https://www.dndbeyond.com/campaigns/pasted-source", pastedHtml);
+  }
+
+  // Sever the tie / disconnect from D&D Beyond
+  async function handleDisconnectDndBeyond() {
+    setDndSyncLoading(true);
+    try {
+      const updatedCamp: Campaign = {
+        ...campaign,
+        dndBeyondUrl: "",
+        dndBeyondNotes: "",
+        updatedAt: new Date().toISOString()
+      };
+      await onUpdateCampaign(updatedCamp);
+      setDndBeyondUrl("");
+      setSyncNotes(null);
+      setSyncSuccessMessage(null);
+      setSyncError(null);
+      setSyncLogs([]);
+    } catch (err: any) {
+      console.error(err);
+      setSyncError("Unlinking campaign failed.");
+    } finally {
+      setDndSyncLoading(false);
+    }
+  }
+
   // Handle adding custom level or magic item progression
   function handleAddProgression(e: React.FormEvent) {
     e.preventDefault();
@@ -379,6 +617,187 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
   return (
     <div className="space-y-6" id="hero-party-tracker-root">
       
+      {/* D&D BEYOND CAMPAIGN REALM LINKER */}
+      <div className="bg-zinc-950 border border-zinc-850 rounded-xl p-5 space-y-4 shadow-2xl relative overflow-hidden" id="dndbeyond-linker-panel">
+        <div className="absolute top-0 right-0 w-32 h-32 bg-red-500/5 rounded-full blur-2xl pointer-events-none" />
+        <div className="absolute bottom-0 left-0 w-32 h-32 bg-purple-500/5 rounded-full blur-2xl pointer-events-none" />
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3.5 border-b border-zinc-850 gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-red-500/10 text-red-500 rounded-lg border border-red-500/20">
+              <Link2 className="w-5 h-5 shrink-0" />
+            </div>
+            <div>
+              <h3 className="text-sm font-fantasy font-extrabold tracking-wider text-zinc-100 uppercase flex items-center gap-2">
+                D&D Beyond Campaign Linker
+              </h3>
+              <p className="text-[10px] font-mono text-zinc-500">
+                Synchronize player characters, active stats & DM chronicle scrolls
+              </p>
+            </div>
+          </div>
+          
+          {campaign.dndBeyondUrl && (
+            <span className="inline-flex self-start sm:self-center items-center gap-1.5 px-2.5 py-1 bg-emerald-950/40 border border-emerald-500/25 text-[10px] font-mono text-emerald-400 rounded-full select-none">
+              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
+              Connected Campaign Link Active
+            </span>
+          )}
+        </div>
+
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+            <div className="md:col-span-8 relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-zinc-500">
+                <Globe className="w-4 h-4" />
+              </div>
+              <input
+                type="text"
+                id="dndbeyond-url-input"
+                placeholder="Paste D&D Beyond campaign link (e.g. https://www.dndbeyond.com/campaigns/1234567)"
+                value={dndBeyondUrl}
+                onChange={(e) => setDndBeyondUrl(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-9 pr-3 py-2 text-xs text-zinc-100 focus:border-red-500 focus:outline-none placeholder:text-zinc-650 font-sans"
+              />
+            </div>
+            <div className="md:col-span-4 flex gap-2">
+              <button
+                onClick={handleSyncDndBeyond}
+                disabled={dndSyncLoading}
+                className="flex-1 py-2 bg-red-650 hover:bg-red-700 disabled:bg-zinc-900 disabled:text-zinc-600 border border-red-500/30 text-zinc-100 text-xs font-mono font-bold tracking-wider rounded-lg shadow-md cursor-pointer transition duration-150 flex items-center justify-center gap-1.5"
+              >
+                {dndSyncLoading ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-3.5 h-3.5" />
+                )}
+                {campaign.dndBeyondUrl ? "Re-Sync Roster" : "Gather Companions"}
+              </button>
+              
+              {campaign.dndBeyondUrl && (
+                <button
+                  onClick={handleDisconnectDndBeyond}
+                  disabled={dndSyncLoading}
+                  className="px-3.5 py-2 bg-zinc-900 hover:bg-zinc-850 hover:text-red-400 text-zinc-400 text-xs font-mono border border-zinc-800 rounded-lg cursor-pointer transition duration-150"
+                  title="Disconnect Campaign Link"
+                >
+                  Disconnect
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Sync Failures & Fallback Paste Container */}
+          {syncError && (
+            <div className="p-4 bg-red-950/20 border border-red-500/20 rounded-lg text-xs space-y-2.5 animate-fadeIn">
+              <div className="flex items-start gap-2.5 text-red-400">
+                <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                <div className="space-y-1">
+                  <p className="font-semibold uppercase tracking-wider font-fantasy">Automated Scribe Blocked</p>
+                  <p className="text-zinc-350 font-sans leading-relaxed">{syncError}</p>
+                </div>
+              </div>
+              {!showPasteFallback && (
+                <div className="pt-1.5">
+                  <button
+                    onClick={() => {
+                      setShowPasteFallback(true);
+                      setSyncError(null);
+                    }}
+                    className="px-3 py-1.5 bg-red-950/40 hover:bg-red-950 border border-red-500/30 text-red-300 rounded font-mono text-[10px] cursor-pointer"
+                  >
+                    Bypass with Direct Web Source Paste &rarr;
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Paste source fallback panel */}
+          {(showPasteFallback || !campaign.dndBeyondUrl) && (
+            <div className="p-4 bg-zinc-950/80 border border-zinc-850 rounded-lg space-y-3.5 font-sans">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono text-zinc-400 uppercase font-bold tracking-widest flex items-center gap-1.5">
+                  <FileText className="w-4 h-4 text-purple-400 animate-pulse" /> Manual Webpage Source Synclink
+                </span>
+                <span className="text-[9px] font-mono text-zinc-500 italic">Cloudflare Bypass Mode</span>
+              </div>
+              <div className="text-[11px] text-zinc-400 font-sans space-y-1.5 leading-relaxed p-3 bg-zinc-950/40 border border-zinc-900 rounded-lg">
+                <p>
+                  D&D Beyond campaign dashboards are sometimes shielded by secure credentials or anti-bot protections. Follow these simple steps to import instantly:
+                </p>
+                <ol className="list-decimal pl-5 space-y-1 text-zinc-400">
+                  <li>Open your campaign page on <strong className="text-zinc-200">dndbeyond.com</strong> in a new browser tab.</li>
+                  <li>Right-click anywhere on the campaign dashboard and select <strong className="text-zinc-200">"View Page Source"</strong> (or press <kbd className="bg-zinc-850 text-zinc-300 px-1 py-0.5 rounded text-[10px] font-mono">Ctrl + U</kbd> / <kbd className="bg-zinc-850 text-zinc-300 px-1 py-0.5 rounded text-[10px] font-mono">Cmd + U</kbd>).</li>
+                  <li>Select everything with <kbd className="bg-zinc-850 text-zinc-300 px-1 py-0.5 rounded text-[10px] font-mono">Ctrl + A</kbd>, copy it, and paste it fully in the vessel below.</li>
+                </ol>
+              </div>
+              <textarea
+                id="dnd-pasted-html-textarea"
+                placeholder="Paste the full raw webpage source HTML starting with <!DOCTYPE html> here..."
+                value={pastedHtml}
+                onChange={(e) => setPastedHtml(e.target.value)}
+                className="w-full h-28 bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-[10px] font-mono text-zinc-300 focus:border-purple-500 focus:outline-none placeholder:text-zinc-705 leading-normal"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleSyncWithPastedHtml}
+                  disabled={!pastedHtml.trim() || dndSyncLoading}
+                  className="px-4 py-2 bg-purple-900/40 hover:bg-purple-900 disabled:bg-zinc-900 disabled:text-zinc-600 text-purple-200 border border-purple-550 hover:border-purple-500/40 text-xs font-mono font-bold tracking-wider rounded-lg cursor-pointer transition duration-150 flex items-center gap-1.5 select-none"
+                >
+                  {dndSyncLoading ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-purple-400" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                  )}
+                  Synthesize Copied Source
+                </button>
+                {showPasteFallback && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPasteFallback(false)}
+                    className="px-3.5 py-2 text-zinc-500 hover:text-zinc-300 text-xs font-mono transition"
+                  >
+                    Hide Paste Shield
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Alignment Details & Logs */}
+          {syncSuccessMessage && (
+            <div className="p-4 bg-emerald-950/20 border border-emerald-500/25 rounded-lg text-xs space-y-3 animate-fadeIn">
+              <div className="flex items-center gap-2 text-emerald-400">
+                <Check className="w-4 h-4 text-emerald-500 animate-bounce" />
+                <span className="font-fantasy font-black tracking-widest text-sm uppercase">Synchronized Campaign Roster Aligned!</span>
+              </div>
+              <p className="text-zinc-300 font-sans leading-normal">
+                {syncSuccessMessage}
+              </p>
+              {syncLogs.length > 0 && (
+                <div className="space-y-1.5 pl-3 border-l-2 border-emerald-500/35 font-sans text-xs">
+                  {syncLogs.map((log, idx) => (
+                    <p key={idx} className="text-zinc-350 leading-relaxed" dangerouslySetInnerHTML={{ __html: log.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') }} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Sync Notes */}
+          {syncNotes && syncNotes !== "N/A" && (
+            <div className="p-4 bg-zinc-950/60 border border-zinc-850 rounded-lg space-y-2">
+              <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider font-extrabold block">📖 DM Campaign Notes & Scrolls</span>
+              <div className="text-zinc-300 font-sans text-xs whitespace-pre-line leading-relaxed max-h-36 overflow-y-auto pr-1">
+                {syncNotes}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* 1. COMPOSITE PARTY OVERVIEW STATS BOARD */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-zinc-900/60 p-4 border border-zinc-800 rounded-lg flex items-center gap-3.5 shadow-lg">

@@ -512,6 +512,132 @@ Ensure all fields are present and valid. Do not include wordy explanations or ma
   }
 });
 
+// Helper for D&D Beyond HTML cleaning
+function cleanDndBeyondHtml(html: string): string {
+  if (!html) return "";
+  let cleaned = html;
+  cleaned = cleaned.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "");
+  cleaned = cleaned.replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, "");
+  cleaned = cleaned.replace(/<head\b[^<]*(?:(?!<\/head>)<[^<]*)*<\/head>/gi, "");
+  cleaned = cleaned.replace(/<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi, "");
+  cleaned = cleaned.replace(/<header\b[^<]*(?:(?!<\/header>)<[^<]*)*<\/header>/gi, "");
+  cleaned = cleaned.replace(/<nav\b[^<]*(?:(?!<\/nav>)<[^<]*)*<\/nav>/gi, "");
+  cleaned = cleaned.replace(/class="[^"]*"/gi, "");
+  cleaned = cleaned.replace(/style="[^"]*"/gi, "");
+  cleaned = cleaned.replace(/\s+/g, " ");
+  return cleaned.substring(0, 350000); // reasonable token limit safety cap
+}
+
+// 6. D&D Beyond Campaign Linker Endpoint
+app.post("/api/parse-dndbeyond", async (req, res) => {
+  try {
+    const { campaignUrl, pastedHtml } = req.body;
+    let htmlContent = "";
+
+    if (pastedHtml && pastedHtml.trim().length > 0) {
+      htmlContent = pastedHtml;
+    } else {
+      if (!campaignUrl) {
+        res.status(400).json({ error: "Missing campaign URL or pasted HTML." });
+        return;
+      }
+
+      try {
+        console.log(`[DNDBeyond Linker] Fetching campaign URL: ${campaignUrl}`);
+        const response = await fetch(campaignUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP status ${response.status}`);
+        }
+
+        htmlContent = await response.text();
+      } catch (fetchErr: any) {
+        console.warn("[DNDBeyond Linker] Direct scrape failed. It likely requires authentication or is blocked.", fetchErr);
+        // Fallback: Signal to the client to ask the user to paste the D&D Beyond page source!
+        res.json({
+          fallbackNeeded: true,
+          message: "Secure gate detected. D&D Beyond campaigns are protected by credentials or Cloudflare security. Please paste the campaign's page source HTML to bypass and sync your companion roster!",
+        });
+        return;
+      }
+    }
+
+    const cleanedData = cleanDndBeyondHtml(htmlContent);
+
+    const prompt = `
+You are a legendary fantasy archivist and a master of D&D character sheet analytics. Your task is to inspect the provided D&D Beyond HTML campaign page source and parse out vital metadata and companion/hero statistics.
+
+Please extract:
+1. Campaign Name (usually in a header like <h1> or within page title blocks e.g., "The Curse of Strahd").
+2. Core/DM notes, descriptions, public/private notes or logs if they exist.
+3. Roster of Active Characters/Heroes:
+   For each character matching an active card or table row in the campaign, extract:
+   - name: The proper character name (e.g., "Roland Ironheart").
+   - classType: The core playable class (e.g., "Fighter", "Wizard", "Rogue", "Cleric", "Paladin", "Bard", "Druid", "Warlock", "Barbarian", "Ranger", "Monk", "Sorcerer" etc. - default to "Fighter" if omitted).
+   - level: Integer level (default to 1).
+   - maxHp: Max hit points integer (default to 10).
+   - ac: Armor Class integer (default to 10).
+   - alignment: e.g., "Chaotic Good", "Neutral", "Lawful Evil", etc.
+   - stats (strength, dexterity, constitution, intelligence, wisdom, charisma): Integer values range 3-20. If missing or undefined, estimate fitting hero stats suitable to their class and level.
+   - magicItems: Array of strings representing named magical items, gear, attuned attunements, or legendary relics (e.g., ["Flame Tongue Longsword", "Ring of Protection"]).
+   - playerName: The name of the actual user controlling them (e.g., "Eric", "Dave"), if present, or "N/A".
+
+Respond with a JSON object in the exact following structure:
+{
+  "campaignName": "The Lost Mines of Phandelver",
+  "description": "Short description of the campaign context or campaign metadata if found.",
+  "notes": "Any public notes, logs, or descriptions written by the DM in the logs, or 'N/A' if empty.",
+  "characters": [
+    {
+      "name": "Aurelia",
+      "classType": "Wizard",
+      "level": 4,
+      "maxHp": 26,
+      "ac": 12,
+      "alignment": "Neutral Good",
+      "strength": 8,
+      "dexterity": 14,
+      "constitution": 12,
+      "intelligence": 16,
+      "wisdom": 14,
+      "charisma": 11,
+      "magicItems": ["Wand of Magic Missiles"],
+      "playerName": "Emily"
+    }
+  ]
+}
+
+Only return clean, valid, raw JSON. Do not include wordy descriptions, markdown containers, or HTML wrapper tokens.
+`;
+
+    console.log("[DNDBeyond Linker] Sending cleaned HTML to Gemini for robust analytics...");
+    const gResponse = await generateContentWithRetry({
+      model: "gemini-3.5-flash",
+      contents: [
+        { text: `CONTEXT SOURCE HTML:\n${cleanedData}` },
+        { text: prompt }
+      ],
+      config: {
+        responseMimeType: "application/json",
+      }
+    });
+
+    const parsedJsonText = extractJsonText(gResponse.text || "{}");
+    const parsedData = JSON.parse(parsedJsonText);
+    res.json(parsedData);
+
+  } catch (error: any) {
+    console.error("[DNDBeyond Linker] Failed to parse dndbeyond page:", error);
+    res.status(500).json({ error: error.message || "Failed to analyze and synchronize campaign data." });
+  }
+});
+
 // Mount Vite middleware for development or serve builds in production
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
