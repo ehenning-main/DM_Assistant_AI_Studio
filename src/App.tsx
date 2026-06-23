@@ -1121,6 +1121,7 @@ export default function App() {
                 {/* Characters Tracker Section */}
                 <CharacterTracker
                   characters={selectedSession.characters || []}
+                  session={selectedSession}
                   onChange={(updated) => {
                     const updatedSession = { ...selectedSession, characters: updated };
                     updateExistingSession(updatedSession).then(() => {
