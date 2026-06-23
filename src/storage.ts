@@ -5,6 +5,27 @@ import { Session, Campaign } from "./types";
 const LOCAL_STORAGE_KEY = "dnd_dm_assistant_sessions_v1";
 const CAMPAIGN_LOCAL_STORAGE_KEY = "dnd_dm_assistant_campaigns_v1";
 
+// Recursive helper to clean undefined properties before Firestore payload delivery
+function cleanUndefined(obj: any): any {
+  if (obj === null || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(cleanUndefined);
+  
+  // Do not traverse custom class instances (like Firestore FieldValue)
+  const proto = Object.getPrototypeOf(obj);
+  if (proto !== null && proto !== Object.prototype) {
+    return obj;
+  }
+
+  const result: any = {};
+  for (const key of Object.keys(obj)) {
+    const val = obj[key];
+    if (val !== undefined) {
+      result[key] = cleanUndefined(val);
+    }
+  }
+  return result;
+}
+
 // Fetches all campaigns associated with the DM
 export async function fetchAllCampaigns(userId: string): Promise<Campaign[]> {
   if (isRealFirebase && db && userId !== "local_guest_dm") {
@@ -51,11 +72,11 @@ export async function createNewCampaign(campaign: Campaign): Promise<void> {
     const path = `campaigns/${campaign.id}`;
     try {
       const docRef = doc(db, "campaigns", campaign.id);
-      await setDoc(docRef, {
+      await setDoc(docRef, cleanUndefined({
         ...campaign,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      });
+      }));
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, path);
     }
@@ -79,10 +100,10 @@ export async function updateExistingCampaign(campaign: Campaign): Promise<void> 
     try {
       const docRef = doc(db, "campaigns", campaign.id);
       const { createdAt, ...updatedFields } = campaign;
-      await setDoc(docRef, {
+      await setDoc(docRef, cleanUndefined({
         ...updatedFields,
         updatedAt: serverTimestamp(),
-      }, { merge: true });
+      }), { merge: true });
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
     }
@@ -116,6 +137,7 @@ export async function removeCampaign(campaignId: string, userId: string): Promis
       // Cascading deletion of sessions belonging to the campaign
       const q = query(
         collection(db, "sessions"),
+        where("userId", "==", userId),
         where("campaignId", "==", campaignId)
       );
       const snapshot = await getDocs(q);
@@ -194,11 +216,11 @@ export async function createNewSession(session: Session): Promise<void> {
     const path = `sessions/${session.id}`;
     try {
       const docRef = doc(db, "sessions", session.id);
-      await setDoc(docRef, {
+      await setDoc(docRef, cleanUndefined({
         ...session,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      });
+      }));
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, path);
     }
@@ -224,10 +246,10 @@ export async function updateExistingSession(session: Session): Promise<void> {
       const docRef = doc(db, "sessions", session.id);
       // Ensure we preserve the original createdAt of type timestamp by omitting it from the string-based payload
       const { createdAt, ...updatedFields } = session;
-      await setDoc(docRef, {
+      await setDoc(docRef, cleanUndefined({
         ...updatedFields,
         updatedAt: serverTimestamp(),
-      }, { merge: true });
+      }), { merge: true });
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
     }

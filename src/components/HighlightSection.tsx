@@ -13,6 +13,12 @@ export function HighlightSection({ highlights, onChange }: HighlightSectionProps
   const [generating, setGenerating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editCaption, setEditCaption] = useState("");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  
+  // Manual picture fields
+  const [showManualAdder, setShowManualAdder] = useState(false);
+  const [manualUrl, setManualUrl] = useState("");
+  const [manualCaption, setManualCaption] = useState("");
 
   // Action: Generates a highlight item
   async function generateHighlight(e: React.FormEvent) {
@@ -20,6 +26,7 @@ export function HighlightSection({ highlights, onChange }: HighlightSectionProps
     if (!prompt.trim()) return;
 
     setGenerating(true);
+    setErrorMsg(null);
     try {
       const res = await fetch("/api/generate-highlight", {
         method: "POST",
@@ -44,10 +51,28 @@ export function HighlightSection({ highlights, onChange }: HighlightSectionProps
       setPrompt("");
     } catch (error: any) {
       console.error(error);
-      alert(`Visualizer anomaly: ${error.message}`);
+      setErrorMsg(error.message);
     } finally {
       setGenerating(false);
     }
+  }
+
+  // Action: Add custom image manually
+  async function handleAddManual(e: React.FormEvent) {
+    e.preventDefault();
+    if (!manualUrl.trim() || !manualCaption.trim()) return;
+
+    const newHighlight: HighlightItem = {
+      id: "manual-highlight-" + Date.now(),
+      imageUrl: manualUrl.trim(),
+      caption: manualCaption.trim(),
+    };
+
+    onChange([...highlights, newHighlight]);
+    setManualUrl("");
+    setManualCaption("");
+    setShowManualAdder(false);
+    setErrorMsg(null);
   }
 
   // Action: Deletes a highlight item
@@ -117,6 +142,80 @@ export function HighlightSection({ highlights, onChange }: HighlightSectionProps
           </button>
         </div>
       </form>
+
+      {errorMsg && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded text-amber-200 text-xs space-y-2" id="highlight-error-banner">
+          <div className="flex gap-2 items-start">
+            <AlertCircle className="w-4.5 h-4.5 text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-sans font-bold text-amber-400 block mb-0.5">Arcane Forge Limit Warning</span>
+              <p className="leading-relaxed text-zinc-300">
+                {errorMsg.toLowerCase().includes("quota") || errorMsg.toLowerCase().includes("429") || errorMsg.toLowerCase().includes("exhausted")
+                  ? "The etheric portal is temporarily locked due to free-tier Google Gemini limit exhaustion (429 Quota). You can wait briefly for its recovery, enable a paid plan via Settings > Secrets, or pin a custom picture directly below!"
+                  : `An arcane anomaly occurred: ${errorMsg}`}
+              </p>
+            </div>
+          </div>
+          
+          <div className="flex justify-end pt-1">
+            <button
+              onClick={() => setShowManualAdder(!showManualAdder)}
+              type="button"
+              className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 rounded text-[11px] font-mono border border-amber-500/30 transition text-right cursor-pointer"
+            >
+              {showManualAdder ? "Hide Manual Form" : "✍️ Open Manual Inscriber"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Picture Inscriber Form */}
+      {showManualAdder && (
+        <form onSubmit={handleAddManual} className="p-4 bg-zinc-950 border border-zinc-800 rounded space-y-3 animation-fadeIn">
+          <div className="flex justify-between items-center pb-2 border-b border-zinc-850">
+            <span className="text-xs font-mono text-zinc-300 uppercase tracking-widest">✍️ MANUAL PORTRAIT BINDING</span>
+            <button
+              type="button"
+              onClick={() => setShowManualAdder(false)}
+              className="text-[10px] text-zinc-500 hover:text-zinc-300 uppercase"
+            >
+              Close
+            </button>
+          </div>
+          <div className="space-y-2">
+            <div>
+              <label className="text-[10px] font-mono text-zinc-450 block uppercase mb-1">Image URL</label>
+              <input
+                type="url"
+                required
+                placeholder="https://images.unsplash.com/photo-... or other direct link"
+                value={manualUrl}
+                onChange={(e) => setManualUrl(e.target.value)}
+                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-amber-500"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-mono text-zinc-450 block uppercase mb-1">Description / Caption</label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. 'Lord Blackwood standing by the dragon altar'"
+                value={manualCaption}
+                onChange={(e) => setManualCaption(e.target.value)}
+                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-amber-500"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end pt-1">
+            <button
+              type="submit"
+              className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-sans font-bold text-xs rounded transition"
+            >
+              Bind Image to Journal
+            </button>
+          </div>
+        </form>
+      )}
 
       {/* Highlights Grid */}
       {highlights.length === 0 ? (

@@ -28,6 +28,7 @@ export interface Session {
   title: string;
   date: string;
   notes: string;
+  playerNotes?: string;
   audioUrl?: string;
   audioTranscription?: string;
   summary?: string;
