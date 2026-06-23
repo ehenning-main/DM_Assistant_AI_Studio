@@ -43,6 +43,7 @@ import { HighlightSection } from "./components/HighlightSection";
 import { VideoSection } from "./components/VideoSection";
 import { CharacterTracker } from "./components/CharacterTracker";
 import { MediaForgeWizard } from "./components/MediaForgeWizard";
+import { HeroPartyTracker } from "./components/HeroPartyTracker";
 
 export default function App() {
   // Authentication & Isomorphic engine states
@@ -83,6 +84,7 @@ export default function App() {
   const [audioTranscription, setAudioTranscription] = useState("");
   const [notesSaving, setNotesSaving] = useState(false);
   const [activeNoteTab, setActiveNoteTab] = useState<"dm" | "player">("dm");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"chapters" | "party">("chapters");
 
   // Creation forms states
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -802,7 +804,46 @@ export default function App() {
             );
           })()}
 
-          <AnimatePresence mode="wait">
+          {/* Active Campaign Workspace Tabs Toggle Row */}
+          {selectedCampaignId && (
+            <div className="flex border-b border-zinc-850 gap-1.5" id="campaign-workspace-tabstrip">
+              <button
+                onClick={() => setActiveWorkspaceTab("chapters")}
+                className={`px-4 py-2.5 border-b-2 font-fantasy tracking-wider uppercase text-xs transition duration-150 flex items-center gap-2 cursor-pointer font-bold ${
+                  activeWorkspaceTab === "chapters"
+                    ? "border-red-500 text-red-500 font-bold bg-zinc-900/40"
+                    : "border-transparent text-zinc-550 hover:text-zinc-300"
+                }`}
+              >
+                <Scroll className="w-3.5 h-3.5" /> 📖 Chronicle Chapters
+              </button>
+              <button
+                onClick={() => setActiveWorkspaceTab("party")}
+                className={`px-4 py-2.5 border-b-2 font-fantasy tracking-wider uppercase text-xs transition duration-150 flex items-center gap-2 cursor-pointer font-bold ${
+                  activeWorkspaceTab === "party"
+                    ? "border-red-500 text-red-500 font-bold bg-zinc-900/40"
+                    : "border-transparent text-zinc-550 hover:text-zinc-300"
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" /> 🛡️ Heroes of the Realm
+              </button>
+            </div>
+          )}
+
+          {selectedCampaignId && activeWorkspaceTab === "party" ? (
+            <HeroPartyTracker
+              campaign={campaigns.find((c) => c.id === selectedCampaignId)!}
+              onUpdateCampaign={async (updated) => {
+                try {
+                  await updateExistingCampaign(updated);
+                  setCampaigns((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+                } catch (e) {
+                  console.error("Failed to update campaign heroes:", e);
+                }
+              }}
+            />
+          ) : (
+            <AnimatePresence mode="wait">
             {!selectedSession ? (
               <motion.div
                 initial={{ opacity: 0 }}
@@ -1122,6 +1163,23 @@ export default function App() {
                 <CharacterTracker
                   characters={selectedSession.characters || []}
                   session={selectedSession}
+                  campaignHeroes={campaigns.find((c) => c.id === selectedCampaignId)?.heroes || []}
+                  onUpdateCampaignHeroes={async (updatedHeroes) => {
+                    const currentCampaign = campaigns.find((c) => c.id === selectedCampaignId);
+                    if (currentCampaign) {
+                      const updatedCamp = {
+                        ...currentCampaign,
+                        heroes: updatedHeroes,
+                        updatedAt: new Date().toISOString()
+                      };
+                      try {
+                        await updateExistingCampaign(updatedCamp);
+                        setCampaigns((prev) => prev.map((c) => (c.id === updatedCamp.id ? updatedCamp : c)));
+                      } catch (e) {
+                        console.error("Failed to sync party during auto-detect:", e);
+                      }
+                    }
+                  }}
                   onChange={(updated) => {
                     const updatedSession = { ...selectedSession, characters: updated };
                     updateExistingSession(updatedSession).then(() => {
@@ -1135,6 +1193,7 @@ export default function App() {
               </motion.div>
             )}
           </AnimatePresence>
+          )}
         </main>
       </div>
 

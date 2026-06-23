@@ -28,8 +28,40 @@ export interface Campaign {
   name: string;
   setting: string;
   description: string;
+  heroes?: HeroCharacter[];
   createdAt: any;
   updatedAt: any;
+}
+
+export interface HeroProgressionRecord {
+  id: string;
+  type: "level" | "magic_item";
+  value: string; // e.g., "Level 5" or "Flame Tongue Longsword"
+  date: string;  // e.g., "June 23, 2026"
+  notes: string; // e.g., "Defeated the goblin warpriest in Chapter 2"
+}
+
+export interface HeroCharacter {
+  id: string;
+  name: string;
+  classType: string; // Class like Fighter, Wizard, Paladin, Cleric, etc.
+  subclass?: string;
+  level: number;
+  maxHp: number;
+  currentHp: number;
+  ac: number;
+  playerName?: string;
+  alignment?: string;
+  passivePerception?: number;
+  activeStatus?: string; // e.g. "Healthy", "Poisoned", "Unconscious", "Exhausted"
+  strength?: number;
+  dexterity?: number;
+  constitution?: number;
+  intelligence?: number;
+  wisdom?: number;
+  charisma?: number;
+  magicItems: string[]; // Current roster of magic items
+  history: HeroProgressionRecord[];
 }
 
 export interface Session {

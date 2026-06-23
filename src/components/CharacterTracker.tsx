@@ -1,15 +1,23 @@
 import React, { useState } from "react";
-import { User, Plus, Trash2, Shield, UserX, Sparkles, ChevronDown, ChevronUp, Dices, Save, Check, RefreshCw, AlertCircle } from "lucide-react";
-import { CharacterItem, Session } from "../types";
+import { User, Plus, Trash2, Shield, UserX, Sparkles, ChevronDown, ChevronUp, Dices, Save, Check, RefreshCw, AlertCircle, Edit } from "lucide-react";
+import { CharacterItem, Session, HeroCharacter } from "../types";
 import { motion, AnimatePresence } from "motion/react";
 
 interface CharacterTrackerProps {
   characters: CharacterItem[];
   onChange: (updated: CharacterItem[]) => void;
   session?: Session;
+  campaignHeroes?: HeroCharacter[];
+  onUpdateCampaignHeroes?: (updated: HeroCharacter[]) => Promise<void>;
 }
 
-export function CharacterTracker({ characters = [], onChange, session }: CharacterTrackerProps) {
+export function CharacterTracker({ 
+  characters = [], 
+  onChange, 
+  session,
+  campaignHeroes = [],
+  onUpdateCampaignHeroes
+}: CharacterTrackerProps) {
   // Manual adding state
   const [name, setName] = useState("");
   const [role, setRole] = useState("NPC Ally");
@@ -20,6 +28,12 @@ export function CharacterTracker({ characters = [], onChange, session }: Charact
   const [detecting, setDetecting] = useState(false);
   const [detectedNPCs, setDetectedNPCs] = useState<CharacterItem[]>([]);
   const [detectionError, setDetectionError] = useState<string | null>(null);
+  const [autoDetectSummary, setAutoDetectSummary] = useState<{ timestamp: number; logs: string[] } | null>(null);
+
+  // Editable fields for NPC core details
+  const [editName, setEditName] = useState("");
+  const [editRole, setEditRole] = useState("NPC Ally");
+  const [editDescription, setEditDescription] = useState("");
 
   // Key stats form state (reusable for review prompting and editing active)
   const [isFormForReview, setIsFormForReview] = useState(true); // true = reviewing a detected NPC; false = editing existing
@@ -71,15 +85,16 @@ export function CharacterTracker({ characters = [], onChange, session }: Charact
     onChange(characters.filter((c) => c.id !== id));
   }
 
-  // Action: Trigger AI NPC detection from chronicle
+  // Action: Trigger AI NPC & PC Hero detection from chronicle
   async function handleAutoDetectNPCs() {
     if (!session?.summary && !session?.notes && !session?.audioTranscription) {
-      setDetectionError("The chronicler requires some text (Chronicle Summary, written notes, or transcription) to analyze for NPC souls.");
+      setDetectionError("The chronicler requires some text (Chronicle Summary, written notes, or transcription) to analyze for NPC and Hero souls.");
       return;
     }
 
     setDetecting(true);
     setDetectionError(null);
+    setAutoDetectSummary(null);
     try {
       const res = await fetch("/api/detect-npcs", {
         method: "POST",
@@ -88,14 +103,32 @@ export function CharacterTracker({ characters = [], onChange, session }: Charact
           summary: session.summary,
           notes: session.notes,
           audioTranscription: session.audioTranscription,
+          existingHeroes: (campaignHeroes || []).map((h) => ({
+            name: h.name,
+            level: h.level,
+            magicItems: h.magicItems || [],
+          })),
         }),
       });
 
       if (!res.ok) {
-        throw new Error(await res.text());
+        const errorText = await res.text();
+        let displayError = errorText;
+        try {
+          const parsed = JSON.parse(errorText);
+          displayError = parsed.error || errorText;
+        } catch {
+          // ignore parsing error fallbacks
+        }
+        throw new Error(displayError);
       }
 
       const data = await res.json();
+      
+      let gotNPCs = false;
+      let gotUpdates = false;
+
+      // 1. Process Detected NPCs
       if (data.characters && data.characters.length > 0) {
         // Map detected items with IDs
         const parsed: CharacterItem[] = data.characters.map((npc: any, index: number) => ({
@@ -116,12 +149,155 @@ export function CharacterTracker({ characters = [], onChange, session }: Charact
           isCustomStatsCreated: true,
         }));
         setDetectedNPCs(parsed);
-      } else {
-        setDetectionError("The ether could discover no unique NPC names or roles mentioned in the selected chronicle.");
+        gotNPCs = true;
+      }
+
+      // 2. Process Player Hero (PC) Updates & New Heroes automatically
+      let updatedCohort = campaignHeroes ? [...campaignHeroes] : [];
+      const statsFeedback: string[] = [];
+
+      // A. Process New Heroes
+      if (data.newHeroes && data.newHeroes.length > 0) {
+        for (const nh of data.newHeroes) {
+          const exists = updatedCohort.some(h => h.name.toLowerCase() === nh.name.toLowerCase());
+          if (!exists) {
+            const newId = "hero_" + Math.random().toString(36).substring(2, 11);
+            const classVal = nh.classType || "Hero Character";
+            const levelVal = nh.level || 1;
+            const maxHpVal = nh.maxHp || 12;
+            const strengthVal = nh.strength || 10;
+            const dexterityVal = nh.dexterity || 10;
+            const constitutionVal = nh.constitution || 10;
+            const intelligenceVal = nh.intelligence || 10;
+            const wisdomVal = nh.wisdom || 10;
+            const charismaVal = nh.charisma || 10;
+            const alignmentVal = nh.alignment || "Neutral Good";
+            const magicItemsVal = nh.magicItems || [];
+
+            const hero: HeroCharacter = {
+              id: newId,
+              name: nh.name,
+              classType: classVal,
+              level: levelVal,
+              maxHp: maxHpVal,
+              currentHp: maxHpVal,
+              ac: nh.ac || 12,
+              alignment: alignmentVal,
+              strength: strengthVal,
+              dexterity: dexterityVal,
+              constitution: constitutionVal,
+              intelligence: intelligenceVal,
+              wisdom: wisdomVal,
+              charisma: charismaVal,
+              magicItems: magicItemsVal,
+              activeStatus: "Healthy",
+              history: [
+                {
+                  id: "hist_init_" + Date.now() + "_" + Math.random().toString(36).substring(2, 5),
+                  type: "level",
+                  value: `Started Level ${levelVal} ${classVal}`,
+                  date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+                  notes: `Automatically inscribed by oracle analyzer into campaign's companion log.`
+                }
+              ]
+            };
+            updatedCohort.push(hero);
+            statsFeedback.push(`🛡️ Summoned New Hero character: **${nh.name}** (Level ${levelVal} ${classVal})`);
+          }
+        }
+      }
+
+      // B. Process Existing Hero Updates (Level-ups, Magic Items)
+      if (data.heroUpdates && data.heroUpdates.length > 0) {
+        for (const up of data.heroUpdates) {
+          const targetIdx = updatedCohort.findIndex(h => h.name.toLowerCase() === up.heroName.toLowerCase());
+          if (targetIdx !== -1) {
+            const rawHero = updatedCohort[targetIdx];
+            
+            if (up.type === "level") {
+              const numericLevel = parseInt(up.value.replace(/\D/g, ""));
+              if (!isNaN(numericLevel) && numericLevel > rawHero.level) {
+                const levelDiff = numericLevel - rawHero.level;
+                const conMod = Math.floor(((rawHero.constitution || 10) - 10) / 2);
+                const hitDieBonus = rawHero.classType.toLowerCase().includes("wizard") || rawHero.classType.toLowerCase().includes("sorcerer") ? 4 : 6;
+                const hpBoost = levelDiff * (hitDieBonus + conMod);
+                
+                const updatedHero: HeroCharacter = {
+                  ...rawHero,
+                  level: numericLevel,
+                  maxHp: rawHero.maxHp + hpBoost,
+                  currentHp: rawHero.currentHp + hpBoost,
+                  history: [
+                    ...(rawHero.history || []),
+                    {
+                      id: "level_up_" + Date.now() + "_" + Math.random().toString(36).substring(2, 5),
+                      type: "level",
+                      value: `Level ${numericLevel}`,
+                      date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+                      notes: up.notes || `Chronicle parsed level-up milestone.`
+                    }
+                  ]
+                };
+                updatedCohort[targetIdx] = updatedHero;
+                statsFeedback.push(`📈 **${rawHero.name}** achieved **Level ${numericLevel}**! (*${up.notes}*)`);
+              }
+            } else if (up.type === "magic_item") {
+              const itemClean = up.value.trim();
+              const itemExists = (rawHero.magicItems || []).some(m => m.toLowerCase() === itemClean.toLowerCase());
+              if (!itemExists && itemClean) {
+                const updatedHero: HeroCharacter = {
+                  ...rawHero,
+                  magicItems: [...(rawHero.magicItems || []), itemClean],
+                  history: [
+                    ...(rawHero.history || []),
+                    {
+                      id: "magic_item_" + Date.now() + "_" + Math.random().toString(36).substring(2, 5),
+                      type: "magic_item",
+                      value: itemClean,
+                      date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+                      notes: up.notes || `Discovered magic relic mentioned in chronicle.`
+                    }
+                  ]
+                };
+                updatedCohort[targetIdx] = updatedHero;
+                statsFeedback.push(`💎 **${rawHero.name}** attuned magic relic **${itemClean}**! (*${up.notes}*)`);
+              }
+            }
+          }
+        }
+      }
+
+      if (statsFeedback.length > 0) {
+        if (onUpdateCampaignHeroes) {
+          await onUpdateCampaignHeroes(updatedCohort);
+        }
+        setAutoDetectSummary({
+          timestamp: Date.now(),
+          logs: statsFeedback
+        });
+        gotUpdates = true;
+      }
+
+      if (!gotNPCs && !gotUpdates) {
+        setDetectionError("The ether could discover no unique NPC mentions, PC level-ups, or magic relic acquisitions in this session chronicle.");
       }
     } catch (err: any) {
       console.error(err);
-      setDetectionError(`Scan failed: ${err.message || err}`);
+      const errStr = String(err.message || err).toUpperCase();
+      const isTransient = errStr.includes("503") || 
+                          errStr.includes("UNAVAILABLE") || 
+                          errStr.includes("429") || 
+                          errStr.includes("QUOTA OUT") || 
+                          errStr.includes("QUOTA EXCEEDED") || 
+                          errStr.includes("HIGH DEMAND") ||
+                          errStr.includes("RESOURCE EXHAUSTED") ||
+                          errStr.includes("TEMPORARY");
+      
+      if (isTransient) {
+        setDetectionError("The high-tier RPG soul detector is experiencing temporary traffic spikes or quota limits (503/429). Please retry in a moment, or use manual buttons to adjust stats or add items at any time!");
+      } else {
+        setDetectionError(`Scan failed: ${err.message || err}`);
+      }
     } finally {
       setDetecting(false);
     }
@@ -131,6 +307,9 @@ export function CharacterTracker({ characters = [], onChange, session }: Charact
   function openStatsReviewPrompt(npc: CharacterItem) {
     setIsFormForReview(true);
     setTargetNPC(npc);
+    setEditName(npc.name || "");
+    setEditRole(npc.role || "NPC Ally");
+    setEditDescription(npc.description || "");
     setStatHp(npc.hp || 12);
     setStatAc(npc.ac || 12);
     setStatAlignment(npc.alignment || "Neutral");
@@ -147,6 +326,9 @@ export function CharacterTracker({ characters = [], onChange, session }: Charact
   function openStatsEditPrompt(npc: CharacterItem) {
     setIsFormForReview(false);
     setTargetNPC(npc);
+    setEditName(npc.name || "");
+    setEditRole(npc.role || "NPC Ally");
+    setEditDescription(npc.description || "");
     setStatHp(npc.hp !== undefined ? npc.hp : 10);
     setStatAc(npc.ac !== undefined ? npc.ac : 10);
     setStatAlignment(npc.alignment || "Neutral");
@@ -166,6 +348,9 @@ export function CharacterTracker({ characters = [], onChange, session }: Charact
 
     const finalizedNPC: CharacterItem = {
       ...targetNPC,
+      name: editName.trim() || targetNPC.name,
+      role: editRole,
+      description: editDescription.trim() || targetNPC.description,
       hp: statHp,
       ac: statAc,
       alignment: statAlignment,
@@ -242,6 +427,37 @@ export function CharacterTracker({ characters = [], onChange, session }: Charact
         </div>
       )}
 
+      {autoDetectSummary && (
+        <div className="p-4 bg-purple-950/20 border border-purple-500/30 rounded-lg text-xs space-y-3 animate-fadeIn relative" id="ai-pc-detector-summary">
+          <button 
+            onClick={() => setAutoDetectSummary(null)}
+            className="absolute top-3 right-3 text-zinc-500 hover:text-purple-300 font-bold text-sm cursor-pointer"
+          >
+            &times;
+          </button>
+          <div className="flex items-center gap-2 text-purple-350">
+            <Sparkles className="w-4 h-4 text-purple-400 animate-pulse" />
+            <span className="font-fantasy font-bold text-sm tracking-wide uppercase">Oracle's Companion Synchronization</span>
+          </div>
+          <p className="text-zinc-350 font-sans leading-relaxed">
+            The Oracle has parsed the session chronicle, automatically matching and synchronizing character levels, magic items, and newly discovered companions to the <strong className="text-red-400 font-fantasy uppercase tracking-wider text-[11px]">Heroes of the Realm</strong> database:
+          </p>
+          <div className="space-y-1.5 pl-2 border-l border-purple-500/30 font-sans">
+            {autoDetectSummary.logs.map((log, idx) => (
+              <div key={idx} className="text-zinc-300 flex items-start gap-1.5 leading-normal">
+                <span className="text-purple-400 shrink-0">•</span>
+                <span dangerouslySetInnerHTML={{ __html: log.replace(/\*\*(.*?)\*\*/g, '<strong class="text-zinc-100 font-bold">$1</strong>').replace(/\*(.*?)\*/g, '<em class="text-zinc-400 italic">$1</em>') }} />
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-zinc-500 font-mono flex items-center gap-2 pt-1 border-t border-zinc-800/40">
+            <span>Synchronized {new Date(autoDetectSummary.timestamp).toLocaleTimeString()}</span>
+            <span>•</span>
+            <span className="text-purple-400">View and edit details in the "Heroes of the Realm" registry!</span>
+          </p>
+        </div>
+      )}
+
       {/* 2. Detected NPCs List awaiting stats review prompting */}
       {detectedNPCs.length > 0 && (
         <div className="bg-zinc-950 p-4 border border-indigo-500/20 rounded-md space-y-3.5 animate-fadeIn" id="detected-npcs-wizard">
@@ -310,9 +526,9 @@ export function CharacterTracker({ characters = [], onChange, session }: Charact
         <form onSubmit={handleSaveStats} className="bg-zinc-950 p-4 border-2 border-red-500/30 rounded-lg space-y-4 shadow-2xl animate-scaleIn" id="npc-stats-prompt-form">
           <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
             <div className="flex items-center gap-1.5">
-              <Dices className="w-4 h-4 text-red-500 animate-spin animate-duration-2000" />
+              <Edit className="w-4 h-4 text-red-500 animate-pulse" />
               <h4 className="font-fantasy text-zinc-100 text-sm tracking-wider uppercase">
-                {isFormForReview ? "Prompt: Confirm RPG Statblock" : `Edit Stats for ${targetNPC.name}`}
+                {isFormForReview ? "Prompt: Confirm RPG Statblock & Identity" : `Inscribe & Edit Details: ${targetNPC.name}`}
               </h4>
             </div>
             <span className="text-[10px] font-mono text-zinc-500 uppercase">
@@ -322,11 +538,55 @@ export function CharacterTracker({ characters = [], onChange, session }: Charact
 
           <p className="text-xs text-zinc-400 leading-relaxed font-sans mt-1">
             {isFormForReview 
-              ? `Please review, input or modify the crucial mechanical stats for ${targetNPC.name} as suggested above by Gemini before committing them to the permanent campaign chronicles.`
-              : `Adjust the tactical attributes, condition parameters, and abilities for this character in the combat archives below.`}
+              ? `Please review, input or modify the identity fields and mechanical stats for ${targetNPC.name} as suggested by Gemini before committing them to the active campaign array.`
+              : `Adjust the biographical fields, tactical attributes, condition parameters, and active combat stats for this soul.`}
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {/* Core Identity Fields */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-zinc-900/40">
+            <div className="space-y-1">
+              <label className="text-[10px] font-mono text-zinc-400 uppercase block tracking-wider">Character Name</label>
+              <input
+                type="text"
+                required
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                placeholder="Name of persona..."
+                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 font-sans focus:border-red-500 focus:outline-none"
+              />
+            </div>
+            
+            <div className="space-y-1">
+              <label className="text-[10px] font-mono text-zinc-400 uppercase block tracking-wider">Role Matrix / Disposition</label>
+              <select
+                value={editRole}
+                onChange={(e) => setEditRole(e.target.value)}
+                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-red-500 font-sans cursor-pointer"
+              >
+                <option value="NPC Ally">🛡️ NPC Ally</option>
+                <option value="Boss Villain">💀 Boss Villain</option>
+                <option value="Quest Giver">📜 Quest Giver</option>
+                <option value="Shopkeeper">🪙 Shopkeeper</option>
+                <option value="Hero Character">⚔️ Hero Character</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[10px] font-mono text-zinc-400 uppercase block tracking-wider">Biography & Personal Narratives</label>
+            <textarea
+              rows={2}
+              required
+              value={editDescription}
+              onChange={(e) => setEditDescription(e.target.value)}
+              placeholder="Short bio, goals, features, or behaviors..."
+              className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 font-sans focus:border-red-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="border-t border-zinc-850 pt-3">
+            <span className="text-[10px] font-mono text-zinc-500 block uppercase mb-2">RPG Combat Attributes</span>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="space-y-1">
               <label className="text-[10px] font-mono text-zinc-400 uppercase tracking-widest block">HP (Hit Points)</label>
               <input
@@ -363,6 +623,7 @@ export function CharacterTracker({ characters = [], onChange, session }: Charact
                 className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-100 font-sans focus:border-red-500 focus:outline-none"
               />
             </div>
+          </div>
           </div>
 
           <div className="border-t border-zinc-850 pt-3">
@@ -607,10 +868,10 @@ export function CharacterTracker({ characters = [], onChange, session }: Charact
                     <button
                       onClick={() => openStatsEditPrompt(char)}
                       className="p-1 hover:bg-zinc-850 text-zinc-500 hover:text-amber-500 rounded transition cursor-pointer"
-                      title="Adjust Attributes & Stats"
+                      title="Edit Details & RPG Statblock"
                       id={`btn-edit-char-stats-${char.id}`}
                     >
-                      <Dices className="w-3.5 h-3.5" />
+                      <Edit className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => removeCharacter(char.id)}

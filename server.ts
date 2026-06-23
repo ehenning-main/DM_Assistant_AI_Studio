@@ -24,6 +24,62 @@ const ai = new GoogleGenAI({
   },
 });
 
+// Helper to perform content generation with retry logic (e.g. exponential backoff for 503/429 errors)
+async function generateContentWithRetry(params: { model: string; contents: any; config?: any }, retries = 3, delayMs = 1500): Promise<any> {
+  let currentModel = params.model;
+  for (let attempt = 1; attempt <= retries + 1; attempt++) {
+    try {
+      return await ai.models.generateContent({
+        ...params,
+        model: currentModel,
+      });
+    } catch (error: any) {
+      const errorStr = String(error.message || error).toUpperCase();
+      const isTransient = errorStr.includes("503") || 
+                          errorStr.includes("UNAVAILABLE") || 
+                          errorStr.includes("429") || 
+                          errorStr.includes("RESOURCE EXHAUSTED") || 
+                          errorStr.includes("QUOTA OUT") ||
+                          errorStr.includes("QUOTA EXCEEDED") ||
+                          errorStr.includes("HIGH DEMAND") ||
+                          error.status === 503 ||
+                          error.status === 429;
+      
+      if (isTransient && attempt <= retries) {
+        // As a high-durability behavior: if we fail on attempt 2 or 3 with gemini-3.5-flash,
+        // we dynamically fallback to the lighter gemini-3.1-flash-lite to bypass load spikes.
+        if (currentModel === "gemini-3.5-flash" && attempt >= 2) {
+          console.warn(`[GEMINI API] Attempt ${attempt} failed for primary model gemini-3.5-flash. Dynamically failing back to gemini-3.1-flash-lite to clear traffic spikes...`);
+          currentModel = "gemini-3.1-flash-lite";
+        }
+        
+        console.warn(`[GEMINI API] Transient issue on attempt ${attempt} (${error.message || error}). Retrying in ${delayMs}ms using model: ${currentModel}...`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        delayMs *= 2.0; // exponential backoff
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+// Safely extracts a clean JSON block from raw model response text, searching for outermost curly braces
+function extractJsonText(text: string): string {
+  if (!text) return "{}";
+  let t = text.trim();
+  // Strip common markdown code block wrappings
+  t = t.replace(/^```[a-zA-Z]*\s*/, "");
+  t = t.replace(/\s*```$/, "");
+  t = t.trim();
+  
+  const firstBrace = t.indexOf("{");
+  const lastBrace = t.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    return t.substring(firstBrace, lastBrace + 1);
+  }
+  return t;
+}
+
 // API Routes
 
 // 1. Live/Snippet Audio Transcription
@@ -48,7 +104,7 @@ app.post("/api/transcribe-audio", async (req, res) => {
     };
 
     // Use gold standards: gemini-3.5-flash for basic text and audio transcription
-    const response = await ai.models.generateContent({
+    const response = await generateContentWithRetry({
       model: "gemini-3.5-flash",
       contents: { parts: [audioPart, promptPart] },
     });
@@ -101,7 +157,7 @@ Compile your response utilizing beautiful clean Markdown formatting with the fol
 *Summarize any significant gold, magic items, weapons, or key rewards claimed, along with any memorable natural 20s, critical failures, or legendary battle statistics.*
 `;
 
-    const response = await ai.models.generateContent({
+    const response = await generateContentWithRetry({
       model: "gemini-3.5-flash",
       contents: [
         { text: campaignContext },
@@ -144,7 +200,7 @@ You must respond with valid string arrays in the exact following JSON format:
 Do not include any wordy explanations or markdown backticks around the JSON. Return only the raw JSON.
 `;
 
-    const response = await ai.models.generateContent({
+    const response = await generateContentWithRetry({
       model: "gemini-3.5-flash",
       contents: [
         { text: summary },
@@ -155,7 +211,7 @@ Do not include any wordy explanations or markdown backticks around the JSON. Ret
       },
     });
 
-    const cleanText = (response.text || "{}").trim().replace(/^```json/, "").replace(/```$/, "").trim();
+    const cleanText = extractJsonText(response.text || "{}");
     const parsed = JSON.parse(cleanText);
     res.json(parsed);
   } catch (error: any) {
@@ -174,7 +230,7 @@ app.post("/api/generate-highlight", async (req, res) => {
     }
 
     // Use gold standards: gemini-2.5-flash-image for general image tasks
-    const response = await ai.models.generateContent({
+    const response = await generateContentWithRetry({
       model: "gemini-2.5-flash-image",
       contents: {
         parts: [
@@ -326,7 +382,7 @@ app.post("/api/video-download", async (req, res) => {
 // 5. Automated NPC Detection from Chronicle / Transcription
 app.post("/api/detect-npcs", async (req, res) => {
   try {
-    const { summary, notes, audioTranscription } = req.body;
+    const { summary, notes, audioTranscription, existingHeroes } = req.body;
     if (!summary && !notes && !audioTranscription) {
       res.status(400).json({ error: "No campaign text, summaries, or transcriptions provided to analyze NPC souls." });
       return;
@@ -341,27 +397,47 @@ ${notes || "N/A"}
 
 --- TRANSCRIPTION LOG ---
 ${audioTranscription || "N/A"}
+
+--- EXISTING PLAYER HEROES ---
+${existingHeroes && existingHeroes.length > 0 
+  ? existingHeroes.map((h: any) => `- Name: ${h.name}, Level: ${h.level}, Magic Items: [${(h.magicItems || []).join(", ")}]`).join("\n")
+  : "None recorded yet."}
 `;
 
     const prompt = `
-You are a master RPG chronicler and Dungeon Master scribe. Analyze the provided campaign context and detect any NPCs (Non-Player Characters) or other distinct roleplay entities that appeared or were mentioned.
-For each detected NPC, extract:
-1. Name (a proper name, title or clean descriptive moniker)
-2. Role/Disposition (one of: "NPC Ally", "Boss Villain", "Quest Giver", "Shopkeeper", "Hero Character")
-3. Brief description (1-2 sentences summarizing their appearance, role in the story, or key behavior)
-4. Key RPG/D&D statistics based on their character concept in the text:
-   - hp (Hit Points - a suitable number, e.g., 8 to 400 depending on power)
-   - ac (Armor Class - 10 to 22)
-   - alignment (e.g. "Lawful Good", "Neutral Evil", "Chaotic Neutral", "Unaligned")
-   - strength (range 3-20)
-   - dexterity (range 3-20)
-   - constitution (range 3-20)
-   - intelligence (range 3-20)
-   - wisdom (range 3-20)
-   - charisma (range 3-20)
-   - skills_or_actions (a short 1-sentence descriptor, e.g., "Weapon attacks +5 to hit (1d8+3 dmg). Proficient in Athletics.")
+You are a master RPG chronicler and Dungeon Master scribe. Analyze the provided campaign context to detect:
+1. NPCs (Non-Player Characters) or other distinct roleplay entities that appeared or were mentioned.
+2. PC/Hero Updates (Updates to any of the matching EXISTING PLAYER HEROES mentioned above, e.g. if the text mentions they leveled up, gained a level, or obtained / found / attuned to a specific magic item / legendary relic).
+3. New Heroes (Any player characters / heroes that have joined the party but are NOT on the existing player heroes list).
 
-You must respond with a JSON object containing a "characters" array in the exact following JSON format:
+For each detected NPC, extract:
+- Name (a proper name, title or clean descriptive moniker)
+- Role/Disposition (one of: "NPC Ally", "Boss Villain", "Quest Giver", "Shopkeeper")
+- Brief description (1-2 sentences summarizing their appearance, role in the story, or key behavior)
+- Key RPG/D&D statistics based on their character concept:
+  - hp (Hit Points - a suitable number, e.g., 8 to 400 depending on power)
+  - ac (Armor Class - 10 to 22)
+  - alignment (e.g. "Lawful Good", "Neutral Evil", "Chaotic Neutral", "Unaligned")
+  - strength, dexterity, constitution, intelligence, wisdom, charisma (range 3-20)
+  - skills_or_actions (a short 1-sentence descriptor, e.g., "Weapon attacks +5 to hit (1d8+3 dmg). Proficient in Athletics.")
+
+For each PC/Hero Update (ONLY for names matching those in the EXISTING PLAYER HEROES list):
+- heroName: The exact name of the existing hero.
+- type: Either "level" (if they leveled up or reached a new level) or "magic_item" (if they acquired/found a new magical item/relic).
+- value: e.g., "Level 5" (if level) or the name of the acquired magic item (e.g., "Flame Tongue Longsword").
+- notes: A short explanation (1 sentence) summarizing how/where they achieved this level-up or found this treasure in the session notes.
+
+For each New Hero (playable companion character NOT on the existing heroes list but who joined the quest or party):
+- name (proper character name)
+- classType (suitable D&D class e.g. Fighter, Wizard, Rogue, Cleric, Paladin, Bard, Druid, Warlock, Barbarian, Ranger, Monk)
+- level (suitable starting level mentioned, defaults to 1)
+- maxHp (Hit points matching level and class)
+- ac (Armor class based on class/gear, e.g. 12-18)
+- alignment (e.g. "Neutral Good", "Chaotic Good", "Neutral")
+- strength, dexterity, constitution, intelligence, wisdom, charisma (range 3-20)
+- magicItems (array of string names of magic items they start with, if any)
+
+You must respond with a JSON object containing characters, heroUpdates, and newHeroes in the exact following JSON format:
 {
   "characters": [
     {
@@ -379,13 +455,44 @@ You must respond with a JSON object containing a "characters" array in the exact
       "charisma": 8,
       "skills_or_actions": "Shortsword attack +4 (1d6+2 piercing)."
     }
+  ],
+  "heroUpdates": [
+    {
+      "heroName": "Roland Ironheart",
+      "type": "level",
+      "value": "Level 6",
+      "notes": "Leveled up after slaying the fire giant in the cave."
+    },
+    {
+      "heroName": "Aurelia",
+      "type": "magic_item",
+      "value": "Staff of Power",
+      "notes": "Retrieved from the high wizard's vault in the academy."
+    }
+  ],
+  "newHeroes": [
+    {
+      "name": "Eldrin the Mage",
+      "classType": "Wizard",
+      "level": 5,
+      "maxHp": 28,
+      "ac": 12,
+      "alignment": "Neutral Good",
+      "strength": 8,
+      "dexterity": 14,
+      "constitution": 12,
+      "intelligence": 16,
+      "wisdom": 14,
+      "charisma": 11,
+      "magicItems": ["Amulet of Health"]
+    }
   ]
 }
 
-Ensure all fields are present and valid. Do not include any wordy explanations or markdown backticks around the JSON. Return only the raw JSON.
+Ensure all fields are present and valid. Do not include wordy explanations or markdown backticks around the JSON. Return only raw JSON.
 `;
 
-    const response = await ai.models.generateContent({
+    const response = await generateContentWithRetry({
       model: "gemini-3.5-flash",
       contents: [
         { text: docContext },
@@ -396,11 +503,11 @@ Ensure all fields are present and valid. Do not include any wordy explanations o
       },
     });
 
-    const cleanText = (response.text || "{}").trim().replace(/^```json/, "").replace(/```$/, "").trim();
+    const cleanText = extractJsonText(response.text || "{}");
     const parsed = JSON.parse(cleanText);
     res.json(parsed);
   } catch (error: any) {
-    console.error("NPC detection error:", error);
+    console.error("Character detection error:", error);
     res.status(400).json({ error: error.message || "Failed to detect characters." });
   }
 });
