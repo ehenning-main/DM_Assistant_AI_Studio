@@ -323,6 +323,88 @@ app.post("/api/video-download", async (req, res) => {
   }
 });
 
+// 5. Automated NPC Detection from Chronicle / Transcription
+app.post("/api/detect-npcs", async (req, res) => {
+  try {
+    const { summary, notes, audioTranscription } = req.body;
+    if (!summary && !notes && !audioTranscription) {
+      res.status(400).json({ error: "No campaign text, summaries, or transcriptions provided to analyze NPC souls." });
+      return;
+    }
+
+    const docContext = `
+--- CAMPAIGN SUMMARY ---
+${summary || "N/A"}
+
+--- SESSION NOTES ---
+${notes || "N/A"}
+
+--- TRANSCRIPTION LOG ---
+${audioTranscription || "N/A"}
+`;
+
+    const prompt = `
+You are a master RPG chronicler and Dungeon Master scribe. Analyze the provided campaign context and detect any NPCs (Non-Player Characters) or other distinct roleplay entities that appeared or were mentioned.
+For each detected NPC, extract:
+1. Name (a proper name, title or clean descriptive moniker)
+2. Role/Disposition (one of: "NPC Ally", "Boss Villain", "Quest Giver", "Shopkeeper", "Hero Character")
+3. Brief description (1-2 sentences summarizing their appearance, role in the story, or key behavior)
+4. Key RPG/D&D statistics based on their character concept in the text:
+   - hp (Hit Points - a suitable number, e.g., 8 to 400 depending on power)
+   - ac (Armor Class - 10 to 22)
+   - alignment (e.g. "Lawful Good", "Neutral Evil", "Chaotic Neutral", "Unaligned")
+   - strength (range 3-20)
+   - dexterity (range 3-20)
+   - constitution (range 3-20)
+   - intelligence (range 3-20)
+   - wisdom (range 3-20)
+   - charisma (range 3-20)
+   - skills_or_actions (a short 1-sentence descriptor, e.g., "Weapon attacks +5 to hit (1d8+3 dmg). Proficient in Athletics.")
+
+You must respond with a JSON object containing a "characters" array in the exact following JSON format:
+{
+  "characters": [
+    {
+      "name": "NPC Name",
+      "role": "NPC Ally",
+      "description": "Short description of the NPC.",
+      "hp": 45,
+      "ac": 15,
+      "alignment": "Neutral Good",
+      "strength": 14,
+      "dexterity": 12,
+      "constitution": 14,
+      "intelligence": 10,
+      "wisdom": 11,
+      "charisma": 8,
+      "skills_or_actions": "Shortsword attack +4 (1d6+2 piercing)."
+    }
+  ]
+}
+
+Ensure all fields are present and valid. Do not include any wordy explanations or markdown backticks around the JSON. Return only the raw JSON.
+`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: [
+        { text: docContext },
+        { text: prompt }
+      ],
+      config: {
+        responseMimeType: "application/json",
+      },
+    });
+
+    const cleanText = (response.text || "{}").trim().replace(/^```json/, "").replace(/```$/, "").trim();
+    const parsed = JSON.parse(cleanText);
+    res.json(parsed);
+  } catch (error: any) {
+    console.error("NPC detection error:", error);
+    res.status(400).json({ error: error.message || "Failed to detect characters." });
+  }
+});
+
 // Mount Vite middleware for development or serve builds in production
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {

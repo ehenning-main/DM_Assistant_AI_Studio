@@ -9,6 +9,17 @@ export interface CharacterItem {
   name: string;
   role: string; // e.g. "NPC Ally", "Boss Villain", "Hero Player"
   description: string;
+  hp?: number;
+  ac?: number;
+  alignment?: string;
+  strength?: number;
+  dexterity?: number;
+  constitution?: number;
+  intelligence?: number;
+  wisdom?: number;
+  charisma?: number;
+  skills_or_actions?: string;
+  isCustomStatsCreated?: boolean;
 }
 
 export interface Campaign {
