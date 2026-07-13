@@ -47,11 +47,11 @@ service cloud.firestore {
       allow update: if isSignedIn()
         && resource.data.userId == request.auth.uid
         && incoming().userId == request.auth.uid
-        && incoming().createdAt == resource.data.createdAt
+        && (!("createdAt" in resource.data) || incoming().createdAt == resource.data.createdAt)
         && incoming().updatedAt == request.time
         && isValidCampaign(incoming())
         && (
-          incoming().diff(resource.data).affectedKeys().hasAny(['name', 'setting', 'description', 'updatedAt'])
+          incoming().diff(resource.data).affectedKeys().hasAny(['name', 'setting', 'description', 'updatedAt', 'heroes'])
         );
         
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
@@ -72,7 +72,7 @@ service cloud.firestore {
       allow update: if isSignedIn()
         && resource.data.userId == request.auth.uid
         && incoming().userId == request.auth.uid
-        && incoming().createdAt == resource.data.createdAt
+        && (!("createdAt" in resource.data) || incoming().createdAt == resource.data.createdAt)
         && incoming().updatedAt == request.time
         && isValidSession(incoming())
         && (
