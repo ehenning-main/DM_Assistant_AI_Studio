@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import dotenv from "dotenv";
-import { GoogleGenAI, GenerateVideosOperation } from "@google/genai";
+import { GoogleGenAI, GenerateVideosOperation, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 
 dotenv.config();
@@ -25,7 +25,7 @@ const ai = new GoogleGenAI({
 });
 
 // Helper to perform content generation with retry logic (e.g. exponential backoff for 503/429 errors)
-async function generateContentWithRetry(params: { model: string; contents: any; config?: any }, retries = 3, delayMs = 1500): Promise<any> {
+async function generateContentWithRetry(params: { model: string; contents: any; config?: any }, retries = 4, delayMs = 1500): Promise<any> {
   let currentModel = params.model;
   for (let attempt = 1; attempt <= retries + 1; attempt++) {
     try {
@@ -46,11 +46,15 @@ async function generateContentWithRetry(params: { model: string; contents: any; 
                           error.status === 429;
       
       if (isTransient && attempt <= retries) {
-        // As a high-durability behavior: if we fail on attempt 2 or 3 with gemini-3.5-flash,
-        // we dynamically fallback to the lighter gemini-3.1-flash-lite to bypass load spikes.
-        if (currentModel === "gemini-3.5-flash" && attempt >= 2) {
+        // As a high-durability behavior: if we fail on attempt 2 with gemini-3.5-flash,
+        // we dynamically fallback to the lighter gemini-3.1-flash-lite, and if that still fails,
+        // we fallback to the highly available gemini-flash-latest to clear traffic spikes.
+        if (currentModel === "gemini-3.5-flash" && attempt === 2) {
           console.warn(`[GEMINI API] Attempt ${attempt} failed for primary model gemini-3.5-flash. Dynamically failing back to gemini-3.1-flash-lite to clear traffic spikes...`);
           currentModel = "gemini-3.1-flash-lite";
+        } else if ((currentModel === "gemini-3.5-flash" || currentModel === "gemini-3.1-flash-lite") && attempt >= 3) {
+          console.warn(`[GEMINI API] Attempt ${attempt} failed. Dynamically failing back to gemini-flash-latest as a tertiary highly-stable fallback model...`);
+          currentModel = "gemini-flash-latest";
         }
         
         console.warn(`[GEMINI API] Transient issue on attempt ${attempt} (${error.message || error}). Retrying in ${delayMs}ms using model: ${currentModel}...`);
@@ -515,17 +519,57 @@ Ensure all fields are present and valid. Do not include wordy explanations or ma
 // Helper for D&D Beyond HTML cleaning
 function cleanDndBeyondHtml(html: string): string {
   if (!html) return "";
+
+  // Try to find raw character state JSON or Javascript declarations to prioritize
+  let extractedJson = "";
+
+  // 1. Match window.CharacterState = { ... }; or var CharacterState = { ... };
+  const stateMatch = html.match(/(?:window\.)?CharacterState\s*=\s*(\{[\s\S]*?\});/i);
+  if (stateMatch) {
+    extractedJson += `[EXTRACTED CHARACTER STATE VARIABLE]: ${stateMatch[1].trim()}\n\n`;
+  }
+
+  // 2. Match window.characterData = { ... }; or var characterData = { ... };
+  const dataMatch = html.match(/(?:window\.)?characterData\s*=\s*(\{[\s\S]*?\});/i);
+  if (dataMatch) {
+    extractedJson += `[EXTRACTED CHARACTER DATA VARIABLE]: ${dataMatch[1].trim()}\n\n`;
+  }
+
+  // 3. Match any script tags containing application/json or containing "character" keywords
+  const scriptRegex = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+  let match;
+  let count = 0;
+  while ((match = scriptRegex.exec(html)) !== null && count < 5) {
+    const scriptContent = match[1].trim();
+    if (
+      scriptContent.includes("CharacterState") || 
+      (scriptContent.includes("\"character\"") && scriptContent.includes("\"id\"") && scriptContent.includes("\"baseHitPoints\"")) ||
+      (scriptContent.includes("character:") && scriptContent.includes("baseHitPoints:"))
+    ) {
+      extractedJson += `[EXTRACTED CHARACTER SCRIPT BLOCK ${count}]: ${scriptContent}\n\n`;
+      count++;
+    }
+  }
+
   let cleaned = html;
   cleaned = cleaned.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "");
   cleaned = cleaned.replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, "");
-  cleaned = cleaned.replace(/<head\b[^<]*(?:(?!<\/head>)<[^<]*)*<\/head>/gi, "");
+  // We do NOT strip the <head> tag completely here because we want to preserve scripts, 
+  // but we can strip heavy link/meta tags.
+  cleaned = cleaned.replace(/<link\b[^>]*>/gi, "");
+  cleaned = cleaned.replace(/<meta\b[^>]*>/gi, "");
   cleaned = cleaned.replace(/<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi, "");
   cleaned = cleaned.replace(/<header\b[^<]*(?:(?!<\/header>)<[^<]*)*<\/header>/gi, "");
   cleaned = cleaned.replace(/<nav\b[^<]*(?:(?!<\/nav>)<[^<]*)*<\/nav>/gi, "");
   cleaned = cleaned.replace(/class="[^"]*"/gi, "");
   cleaned = cleaned.replace(/style="[^"]*"/gi, "");
   cleaned = cleaned.replace(/\s+/g, " ");
-  return cleaned.substring(0, 350000); // reasonable token limit safety cap
+
+  // Prepend any highly structure JSON characters
+  if (extractedJson.trim()) {
+    return (extractedJson + "\n" + cleaned).substring(0, 380000);
+  }
+  return cleaned.substring(0, 380000);
 }
 
 // 6. D&D Beyond Campaign Linker Endpoint
@@ -557,6 +601,19 @@ app.post("/api/parse-dndbeyond", async (req, res) => {
         }
 
         htmlContent = await response.text();
+
+        // Check if campaign HTML is valid or a security shell
+        const isCloudflare = htmlContent.includes("cloudflare") || htmlContent.includes("Cloudflare") || htmlContent.includes("Checking your browser");
+        const hasCampaignData = htmlContent.includes("campaign") || htmlContent.includes("b-campaign") || htmlContent.includes("campaign-details") || htmlContent.includes("characters") || htmlContent.includes("roster");
+
+        if (isCloudflare || !hasCampaignData) {
+          console.warn("[DNDBeyond Linker] Campaign webpage fetched but appears to be a Cloudflare block, login wall, or private campaign.");
+          res.json({
+            fallbackNeeded: true,
+            message: "Secure gate or private campaign detected. D&D Beyond campaigns are protected by credentials or Cloudflare security. Please open the campaign page in your browser, press Ctrl+U (or right-click and 'View Page Source'), copy the entire HTML, and paste it below to bypass and sync your companion roster!",
+          });
+          return;
+        }
       } catch (fetchErr: any) {
         console.warn("[DNDBeyond Linker] Direct scrape failed. It likely requires authentication or is blocked.", fetchErr);
         // Fallback: Signal to the client to ask the user to paste the D&D Beyond page source!
@@ -573,6 +630,17 @@ app.post("/api/parse-dndbeyond", async (req, res) => {
     const prompt = `
 You are a legendary fantasy archivist and a master of D&D character sheet analytics. Your task is to inspect the provided D&D Beyond HTML campaign page source and parse out vital metadata and companion/hero statistics.
 
+CRITICAL SAFETY AND VALIDATION DIRECTIVE:
+The provided source data might be empty, truncated, generic page HTML (containing only menus, standard footer, or navigation), a Cloudflare challenge screen, or a login wall. 
+If the provided source data does NOT contain recognizable, active campaign/character listings, or if it appears to be a blank SPA wrapper or Cloudflare wall, you MUST return a JSON with fallbackNeeded set to true and a descriptive message. 
+DO NOT hallucinate or return the default template campaign/characters if you cannot find valid data. 
+
+If invalid, return:
+{
+  "fallbackNeeded": true,
+  "message": "Secure gateway, anti-scraping system, or private campaign page detected. Could not extract campaign roster. Please open the campaign webpage in your browser, press Ctrl+U (or right-click and 'View Page Source'), copy the entire HTML, and paste it below to sync everything instantly!"
+}
+
 Please extract:
 1. Campaign Name (usually in a header like <h1> or within page title blocks e.g., "The Curse of Strahd").
 2. Core/DM notes, descriptions, public/private notes or logs if they exist.
@@ -582,6 +650,7 @@ Please extract:
    - classType: The core playable class (e.g., "Fighter", "Wizard", "Rogue", "Cleric", "Paladin", "Bard", "Druid", "Warlock", "Barbarian", "Ranger", "Monk", "Sorcerer" etc. - default to "Fighter" if omitted).
    - level: Integer level (default to 1).
    - maxHp: Max hit points integer (default to 10).
+   - currentHp: Current hit points integer (default to same as maxHp, but look for a fraction or expression like "42 / 81" or "42/81" or a visual health bar state on the character row/card representing remaining hit points; if you find it, set currentHp to the numerator/remaining value e.g. 42).
    - ac: Armor Class integer (default to 10).
    - alignment: e.g., "Chaotic Good", "Neutral", "Lawful Evil", etc.
    - stats (strength, dexterity, constitution, intelligence, wisdom, charisma): Integer values range 3-20. If missing or undefined, estimate fitting hero stats suitable to their class and level.
@@ -599,6 +668,7 @@ Respond with a JSON object in the exact following structure:
       "classType": "Wizard",
       "level": 4,
       "maxHp": 26,
+      "currentHp": 26,
       "ac": 12,
       "alignment": "Neutral Good",
       "strength": 8,
@@ -635,6 +705,953 @@ Only return clean, valid, raw JSON. Do not include wordy descriptions, markdown 
   } catch (error: any) {
     console.error("[DNDBeyond Linker] Failed to parse dndbeyond page:", error);
     res.status(500).json({ error: error.message || "Failed to analyze and synchronize campaign data." });
+  }
+});
+
+// Helper to extract character ID from D&D Beyond URL or string
+function extractCharacterId(urlOrId: string): string | null {
+  if (!urlOrId) return null;
+  const trimmed = urlOrId.trim();
+  // If it's just numbers, return it
+  if (/^\d+$/.test(trimmed)) {
+    return trimmed;
+  }
+  // Match standard dndbeyond URL patterns
+  const matches = [
+    /characters\/(\d+)/i,
+    /characters?=(\d+)/i,
+    /ddb\.ac\/characters\/(\d+)/i,
+    /profile\/[^/]+\/characters\/(\d+)/i,
+    /character\/(\d+)/i
+  ];
+  for (const regex of matches) {
+    const m = trimmed.match(regex);
+    if (m && m[1]) {
+      return m[1];
+    }
+  }
+  return null;
+}
+
+// 7. D&D Beyond Individual Character Sheet Linker Endpoint
+app.post("/api/parse-dndbeyond-character", async (req, res) => {
+  try {
+    const { characterUrl, pastedHtml } = req.body;
+    let htmlContent = "";
+    let directJsonData: any = null;
+
+    const prompt = `
+You are a legendary fantasy archivist and a master of D&D character sheet analytics. Your task is to inspect the provided D&D Beyond HTML character sheet source page or raw JSON and parse out vital character stats.
+
+CRITICAL SAFETY AND VALIDATION DIRECTIVE:
+The provided source data might be empty, truncated, generic page HTML (containing only menus, standard footer, or navigation), a Cloudflare challenge screen, or a login wall. 
+If the provided source data does NOT contain recognizable, active character stats, or if it appears to be a blank SPA wrapper or Cloudflare wall, you MUST return a JSON with fallbackNeeded set to true and a descriptive message. 
+DO NOT hallucinate or return the default template character "Roland Ironheart" if you cannot find valid data for a real character sheet. 
+
+If invalid, return:
+{
+  "fallbackNeeded": true,
+  "message": "Secure gateway, anti-scraping system, or private character sheet detected. Could not extract valid stats. Please open your character sheet in your browser, press Ctrl+U (or right-click and 'View Page Source'), copy the entire HTML, and paste it below to sync everything instantly!"
+}
+
+CRITICAL STATS DIRECTIVE:
+We need highly accurate data. Pay special attention to:
+1. name: The character name (e.g., "Roland Ironheart"). Never default to "Unknown" if there's any name mentioned in the JSON/HTML.
+2. classType: The playable class (Fighter, Wizard, Rogue, Cleric, etc.).
+3. subclass: The subclass specialization (Champion, Evocation, etc.).
+4. race: e.g., Human, Elf, Dwarf, Halfling, Tiefling, etc.
+5. level: Integer level (look under classes levels).
+6. maxHp: Max hit points integer. Follow these precise rules for calculation:
+   - IF RAW JSON IS PROVIDED:
+     * Check "overrideHitPoints" first. If "overrideHitPoints" is set (non-null and > 0), then maxHp is exactly that value!
+     * Otherwise, maxHp = baseHitPoints + bonusHitPoints + (Constitution_Modifier * Total_Character_Level) + Feat_HP_Bonus.
+     * To find Constitution_Modifier: look up the Constitution base score in the "stats" array (id: 3 is Constitution). Also check "bonusStats" and "overrideStats" for id: 3, as well as modifier bonuses (under "modifiers" for "bonus-constitution-score"). The modifier value is Math.floor((Constitution_Score - 10) / 2).
+     * Total_Character_Level is the sum of levels of all classes in the "classes" array.
+     * Look for other flat HP feats or modifiers like Tough (which adds 2 HP per level) or Draconic Resilience (adds 1 HP per level) and add them if active.
+   - IF HTML IS PROVIDED:
+     * Look for text patterns like "HP 42 / 81" or "42/81" or elements with classes like "ct-health-summary__hp-max" or similar. The maximum hit points is the second/denominator value (e.g. 81).
+7. currentHp: Current hit points integer. Follow these precise rules for calculation:
+   - IF RAW JSON IS PROVIDED:
+     * Look up "removedHitPoints" (this represents damage taken).
+     * currentHp = maxHp - removedHitPoints.
+     * For example, if maxHp is 81, and removedHitPoints is 39, then currentHp is 81 - 39 = 42!
+     * If removedHitPoints is 0, null, or undefined, then currentHp = maxHp.
+   - IF HTML IS PROVIDED:
+     * Look for text patterns like "HP 42 / 81" or "42/81" or elements with classes like "ct-health-summary__hp-current" or similar. The current hit points is the first/numerator value (e.g. 42).
+8. ac: Armor Class integer (look under armorClass, ac, or calculate from base + dexterity/armor stats).
+9. alignment: e.g., "Chaotic Good", "Neutral", "Lawful Evil", etc.
+10. passivePerception: Passive perception score (usually 10 + wisdom modifier, unless specialized).
+11. stats: Extract base ability scores (usually 3-20 range, extract base values before modifiers):
+   - strength (STR base score, e.g. 15)
+   - dexterity (DEX base score, e.g. 14)
+   - constitution (CON base score, e.g. 14)
+   - intelligence (INT base score, e.g. 10)
+   - wisdom (WIS base score, e.g. 12)
+   - charisma (CHA base score, e.g. 8)
+12. magicItems: Array of strings representing named magical items, gear, attuned attunements, or legendary relics (e.g., ["Flame Tongue Longsword", "Ring of Protection"]).
+13. playerName: The name/alias of the actual user controlling them if present, or "N/A".
+14. inventory: Array of inventory items (both equipped and pack items). For each item, extract:
+    - name: string (e.g. "Flame Tongue Longsword")
+    - description: string (any details or effects of the item)
+    - quantity: number (defaults to 1)
+    - equipped: boolean (true if equipped/active, false otherwise)
+    - type: string (e.g. "Weapon", "Armor", "Potion", "Ring", "Wondrous Item", "Gear")
+    - rarity: string (e.g. "Common", "Uncommon", "Rare", "Very Rare", "Legendary", "Artifact")
+    - isAttuned: boolean (whether attuned to the character)
+15. spells: Array of spells in their spellbook or grimoire. For each spell, extract:
+    - name: string (e.g. "Fireball")
+    - level: number (0 for Cantrips, 1-9 for spell level)
+    - school: string (e.g. "Evocation", "Abjuration")
+    - description: string (concise explanation of effects/damage)
+    - range: string (e.g. "120 ft", "Self", "Touch")
+    - castingTime: string (e.g. "1 Action", "1 Bonus Action", "1 Reaction")
+    - components: array of strings (e.g. ["V", "S", "M"])
+    - duration: string (e.g. "Concentration, up to 1 minute", "Instantaneous")
+
+If analyzing raw HTML, look for these specific class names and markup patterns:
+- Character Name: Look for text inside elements with classes like "ct-character-name", "ct-character-header__name", or the main page title. Do NOT default to "Unknown" if you can find any name or heading representing the character name.
+- Core Class & Level: Look for "ct-character-header__class-level", "ct-character-header__level", or "ct-character-header__class" (e.g., "Fighter 5", "Level 5 Fighter").
+- Subclass: Look for "ct-character-header__subclass" or texts like "Champion", "Hexblade", "Evocation".
+- Race: Look for "ct-character-header__race", "ct-character-header__race-value", or common race names (e.g. "Human", "Elf", "Dwarf", "Tiefling").
+- Max HP & Current HP: Look for elements with "ct-health-summary__hp-number", "ct-health-summary__hp-current", "ct-health-summary__hp-max", or text like "HP 44 / 44" or "44/44" or "42 / 81".
+- Armor Class (AC): Look for "ct-combat-summary__ac-value", "ct-combat-summary__ac", or elements labeled "Armor Class" or "AC" (e.g., 18).
+- Alignment: Look for "ct-character-details__alignment", "alignment", or texts like "Neutral Good", "Chaotic Good", "Lawful Neutral".
+- Ability Scores (Strength, Dexterity, Constitution, Intelligence, Wisdom, Charisma): Look for "ct-ability-summary__primary-value", "ct-ability-summary__secondary-value" or labeled containers with ability score names and numbers from 3 to 20.
+- Magic Items: Look for equipment listed under "ct-inventory-item" or "ct-inventory-item__name" that are marked as magic, attuned, or active, or standard D&D magic item names.
+- Inventory: Scan all items listed under inventory sections, gear, equipment, weapons, and containers. Look for classes like "ct-inventory-item", descriptions, quantity.
+- Spells: Scan all spells under the spells sections or spell sheets. Look for casting time, school, components, description, range, duration, and spell level.
+- Player Name: Look for "ct-character-header__player-name", "player-name", or similar, or default to "N/A".
+
+Respond with a JSON object in the exact following structure. This template is ONLY for syntax shape; you MUST populate it with the actual parsed stats:
+{
+  "name": "Roland Ironheart",
+  "classType": "Fighter",
+  "subclass": "Champion",
+  "race": "Human",
+  "level": 5,
+  "maxHp": 44,
+  "currentHp": 44,
+  "ac": 18,
+  "alignment": "Lawful Good",
+  "passivePerception": 13,
+  "strength": 16,
+  "dexterity": 12,
+  "constitution": 15,
+  "intelligence": 10,
+  "wisdom": 12,
+  "charisma": 8,
+  "magicItems": ["Flame Tongue Longsword"],
+  "playerName": "Eric",
+  "inventory": [
+    {
+      "name": "Flame Tongue Longsword",
+      "description": "A legendary sword that deals extra fire damage.",
+      "quantity": 1,
+      "equipped": true,
+      "type": "Weapon",
+      "rarity": "Rare",
+      "isAttuned": true
+    },
+    {
+      "name": "Explorer's Pack",
+      "description": "Includes a backpack, bedroll, mess kit, and tinderbox.",
+      "quantity": 1,
+      "equipped": false,
+      "type": "Gear",
+      "rarity": "Common",
+      "isAttuned": false
+    }
+  ],
+  "spells": [
+    {
+      "name": "Fireball",
+      "level": 3,
+      "school": "Evocation",
+      "description": "A bright streak flashes from your pointing finger...",
+      "range": "150 feet",
+      "castingTime": "1 Action",
+      "components": ["V", "S", "M"],
+      "duration": "Instantaneous"
+    }
+  ]
+}
+
+Only return clean, valid, raw JSON. Do not include wordy descriptions, markdown containers, or HTML wrapper tokens.
+`;
+
+    // 1. Try fetching pristine JSON via D&D Beyond API Service first
+    if (!pastedHtml || pastedHtml.trim().length === 0) {
+      const charId = extractCharacterId(characterUrl);
+      if (charId) {
+        try {
+          const apiUrl = `https://character-service.dndbeyond.com/character/v5/character/${charId}`;
+          console.log(`[DNDBeyond Character Linker] Attempting official API JSON fetch: ${apiUrl}`);
+          const apiResponse = await fetch(apiUrl, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Accept": "application/json",
+            }
+          });
+
+          if (apiResponse.ok) {
+            const apiJson = await apiResponse.json();
+            if (apiJson && apiJson.success && apiJson.data) {
+              console.log(`[DNDBeyond Character Linker] Successfully fetched character JSON for: ${apiJson.data.name}`);
+              directJsonData = apiJson.data;
+            } else {
+              console.log("[DNDBeyond Character Linker] Character data is not directly public, preparing public-only advisory response.");
+              res.json({
+                fallbackNeeded: true,
+                message: "This character sheet is set to 'Private' on D&D Beyond. Import only works for sheets explicitly set to 'Public' by the user. Please open your character sheet on D&D Beyond, edit preferences, set character privacy to 'Public', and sync again.",
+                isPrivateError: true
+              });
+              return;
+            }
+          } else {
+            console.log(`[DNDBeyond Character Linker] Query response: ${apiResponse.status} (non-public or invalid profile ID)`);
+            res.json({
+              fallbackNeeded: true,
+              message: "This character sheet is set to 'Private' or does not exist. Direct D&D Beyond URL import only works for sheets explicitly set to 'Public' by the user. Please open your character sheet on D&D Beyond, edit preferences, set character privacy to 'Public', and sync again.",
+              isPrivateError: true
+            });
+            return;
+          }
+        } catch (apiErr: any) {
+          console.log("[DNDBeyond Character Linker] Completed API fetch check (non-public sheet or network boundary reached)");
+          res.json({
+            fallbackNeeded: true,
+            message: "This character sheet could not be fetched (it may be Private). Direct D&D Beyond URL import only works for sheets explicitly set to 'Public' by the user. Please make sure your D&D Beyond character sheet is explicitly set to 'Public' to be imported.",
+            isPrivateError: true
+          });
+          return;
+        }
+      }
+    }
+
+    // 2. If we got JSON data, parse it directly with 100% precision!
+    if (directJsonData) {
+      console.log("[DNDBeyond Character Linker] Direct JSON fetched, parsing via native parser...");
+      try {
+        const parsedData = parseDndBeyondJson(directJsonData, "auto");
+        res.json(parsedData);
+        return;
+      } catch (e: any) {
+        console.warn("[DNDBeyond Character Linker] Native parsing failed, falling back to Gemini...", e);
+        const gResponse = await generateContentWithRetry({
+          model: "gemini-3.5-flash",
+          contents: [
+            { text: `RAW OFFICIAL CHARACTER JSON:\n${JSON.stringify(directJsonData)}` },
+            { text: prompt }
+          ],
+          config: {
+            responseMimeType: "application/json",
+          }
+        });
+
+        const parsedJsonText = extractJsonText(gResponse.text || "{}");
+        const parsedData = JSON.parse(parsedJsonText);
+        res.json(parsedData);
+        return;
+      }
+    }
+
+    // 3. Fallback to scraping webpage HTML or processing Pasted HTML
+    if (pastedHtml && pastedHtml.trim().length > 0) {
+      htmlContent = pastedHtml;
+    } else {
+      if (!characterUrl) {
+        res.status(400).json({ error: "Missing character URL or pasted HTML." });
+        return;
+      }
+
+      try {
+        console.log(`[DNDBeyond Character Linker] Scraping webpage URL: ${characterUrl}`);
+        const response = await fetch(characterUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP status ${response.status}`);
+        }
+
+        htmlContent = await response.text();
+
+        // Check if fetched HTML is just Cloudflare challenge page or lacks character details
+        const isCloudflare = htmlContent.includes("cloudflare") || htmlContent.includes("Cloudflare") || htmlContent.includes("Checking your browser");
+        const hasCharacterData = 
+          htmlContent.includes("CharacterState") || 
+          htmlContent.includes("characterData") || 
+          (htmlContent.includes("baseHitPoints") && htmlContent.includes("removedHitPoints")) ||
+          htmlContent.includes("ct-character-name") || 
+          htmlContent.includes("ct-health-summary") ||
+          htmlContent.includes("character-sheet-container") ||
+          (htmlContent.includes("classType") && htmlContent.includes("alignment"));
+
+        if (isCloudflare || !hasCharacterData) {
+          console.warn("[DNDBeyond Character Linker] Webpage fetched but appears to be a Cloudflare block or login shell.");
+          res.json({
+            fallbackNeeded: true,
+            message: "Secure gateway, anti-scraping system, or private character sheet detected. D&D Beyond individual character profiles are protected. Please open your character sheet in your browser, press Ctrl+U (or right-click and 'View Page Source'), copy the entire HTML, and paste it below to sync everything instantly!",
+          });
+          return;
+        }
+
+      } catch (fetchErr: any) {
+        console.warn("[DNDBeyond Character Linker] Web page scrape failed.", fetchErr);
+        res.json({
+          fallbackNeeded: true,
+          message: "Scraping failed or secure gateway detected. To synchronize successfully, please open your D&D Beyond Character Sheet in your browser, View Page Source (Ctrl+U), copy all HTML, and paste it in the fall-back container below!",
+        });
+        return;
+      }
+    }
+
+    const cleanedData = cleanDndBeyondHtml(htmlContent);
+
+    console.log("[DNDBeyond Character Linker] Sending cleaned HTML/Extracted elements to Gemini for robust parsing...");
+    const gResponse = await generateContentWithRetry({
+      model: "gemini-3.5-flash",
+      contents: [
+        { text: `CONTEXT SOURCE DATA:\n${cleanedData}` },
+        { text: prompt }
+      ],
+      config: {
+        responseMimeType: "application/json",
+      }
+    });
+
+    const parsedJsonText = extractJsonText(gResponse.text || "{}");
+    const parsedData = JSON.parse(parsedJsonText);
+    res.json(parsedData);
+
+  } catch (error: any) {
+    console.error("[DNDBeyond Character Linker] Failed to parse character:", error);
+    res.status(500).json({ error: error.message || "Failed to analyze and synchronize character sheet data." });
+  }
+});
+
+
+// --- NEW D&D BEYOND IMPORTER INTEGRATION ENDPOINTS ---
+
+// Parse D&D Beyond API JSON response to our client-safe CharacterData
+function parseDndBeyondJson(json: any, sourceType: "auto" | "pasted_json"): any {
+  const data = json.data || json; // Handle wrapping or direct payload
+  if (!data || (!data.name && !data.stats)) {
+    throw new Error("Invalid D&D Beyond character data structure. Make sure you copy/pasted the entire JSON response.");
+  }
+
+  // 1. Name & Avatar
+  const name = data.name || "Unnamed Character";
+  const avatarUrl = data.avatarUrl || "";
+
+  // 2. Race
+  const race = data.race?.fullName || data.race?.baseRaceName || "Unknown Race";
+
+  // 3. Classes & Level
+  const classes = (data.classes || []).map((cls: any) => ({
+    className: cls.definition?.name || "Unknown Class",
+    level: cls.level || 0,
+    subclass: cls.subclassDefinition?.name || undefined,
+  }));
+  const level = classes.reduce((sum: number, cls: any) => sum + cls.level, 0) || 1;
+
+  // 4. Stats
+  const getStatDetail = (statId: number, statName: string) => {
+    const baseObj = (data.stats || []).find((s: any) => s.id === statId);
+    const bonusObj = (data.bonusStats || []).find((s: any) => s.id === statId);
+    const overrideObj = (data.overrideStats || []).find((s: any) => s.id === statId);
+
+    const base = baseObj?.value || 10;
+    const bonusFromStats = bonusObj?.value || 0;
+    const override = overrideObj?.value || 0;
+
+    // Scan modifiers for additional bonuses (e.g. race, feats, items)
+    let modifierBonus = 0;
+    let setOverrideValue = 0;
+    if (data.modifiers) {
+      const subTypeKey = `${statName}-score`;
+      for (const group in data.modifiers) {
+        if (Array.isArray(data.modifiers[group])) {
+          data.modifiers[group].forEach((mod: any) => {
+            if ((mod.type === "bonus" || mod.type === "ability-score-increase") && mod.subType === subTypeKey) {
+              modifierBonus += mod.value || 0;
+            }
+            if (mod.type === "set" && mod.subType === subTypeKey) {
+              setOverrideValue = Math.max(setOverrideValue, mod.value || 0);
+            }
+          });
+        }
+      }
+    }
+
+    const naturalTotal = (override > 0 ? override : base) + bonusFromStats + modifierBonus;
+    const total = setOverrideValue > 0 ? Math.max(naturalTotal, setOverrideValue) : naturalTotal;
+    const bonus = total - base;
+
+    return { base, bonus, override, total };
+  };
+
+  const stats = {
+    strength: getStatDetail(1, "strength"),
+    dexterity: getStatDetail(2, "dexterity"),
+    constitution: getStatDetail(3, "constitution"),
+    intelligence: getStatDetail(4, "intelligence"),
+    wisdom: getStatDetail(5, "wisdom"),
+    charisma: getStatDetail(6, "charisma"),
+  };
+
+  // Con modifier calculation
+  const conScore = stats.constitution.total;
+  const conMod = Math.floor((conScore - 10) / 2);
+
+  // 5. HP
+  const baseHp = data.baseHitPoints || 0;
+  const bonusHp = data.bonusHitPoints || 0;
+  const overrideHp = data.overrideHitPoints || 0;
+  const removedHp = data.removedHitPoints || 0;
+  const tempHp = data.temporaryHitPoints || 0;
+
+  let maxHp = overrideHp;
+  if (!maxHp) {
+    maxHp = baseHp + bonusHp + (conMod * level);
+  }
+  const currentHp = Math.max(0, maxHp + tempHp - removedHp);
+
+  // Helper to strip HTML tags from parsed descriptions to avoid layout clutter
+  const stripHtml = (htmlStr: string): string => {
+    if (!htmlStr) return "";
+    return htmlStr
+      .replace(/<[^>]*>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  };
+
+  // 6. Inventory
+  const inventory = (data.inventory || []).map((item: any) => {
+    const def = item.definition || {};
+    return {
+      name: def.name || "Unknown Item",
+      description: stripHtml(def.description || def.snippet || ""),
+      quantity: item.quantity || 1,
+      equipped: !!item.equipped,
+      type: def.filterType || def.type || "Item",
+      rarity: def.rarity || "Common",
+      isAttuned: !!item.isAttuned || !!item.attuned,
+      weight: def.weight || 0,
+    };
+  });
+
+  // Calculate AC (Armor Class) thoroughly and accurately
+  const dexScore = stats.dexterity.total;
+  const dexMod = Math.floor((dexScore - 10) / 2);
+
+  let hasArmor = false;
+  let armorBaseAc = 10;
+  let armorDexLimit = 99; // Default: unlimited (unarmored/light armor)
+  let shieldAcBonus = 0;
+
+  if (data.inventory && Array.isArray(data.inventory)) {
+    data.inventory.forEach((item: any) => {
+      if (item.equipped) {
+        const def = item.definition || {};
+        const nameLower = (def.name || "").toLowerCase();
+        const filterType = (def.filterType || "").toLowerCase();
+        const armorTypeId = def.armorTypeId;
+        
+        const isShield = armorTypeId === 4 || filterType === "shield" || nameLower.includes("shield");
+        const isArmor = [1, 2, 3].includes(armorTypeId) || filterType === "armor" || nameLower.includes("mail") || nameLower.includes("plate") || nameLower.includes("leather") || nameLower.includes("hide") || nameLower.includes("breastplate") || nameLower.includes("padded") || nameLower.includes("scale") || nameLower.includes("splint") || nameLower.includes("ring mail");
+
+        if (isShield) {
+          const baseShield = def.armorClass !== undefined ? def.armorClass : 2;
+          shieldAcBonus += baseShield;
+        } else if (isArmor && !isShield) {
+          hasArmor = true;
+          const baseClass = def.armorClass || 10;
+          let limit = 99;
+          
+          if (armorTypeId === 2 || nameLower.includes("scale mail") || nameLower.includes("breastplate") || nameLower.includes("half plate") || nameLower.includes("hide") || nameLower.includes("chain shirt") || nameLower.includes("scale")) {
+            limit = 2; // Medium armor caps Dex modifier at 2
+          } else if (armorTypeId === 3 || nameLower.includes("plate") || nameLower.includes("chain mail") || nameLower.includes("splint") || nameLower.includes("ring mail")) {
+            limit = 0; // Heavy armor does not add Dex modifier
+          }
+          
+          if (baseClass > armorBaseAc) {
+            armorBaseAc = baseClass;
+            armorDexLimit = limit;
+          }
+        }
+      }
+    });
+  }
+
+  let unarmoredBaseAc = 10;
+  if (!hasArmor) {
+    if (data.modifiers) {
+      for (const group in data.modifiers) {
+        if (Array.isArray(data.modifiers[group])) {
+          data.modifiers[group].forEach((mod: any) => {
+            if (mod.type === "set" && mod.subType === "unarmored-armor-class") {
+              if (mod.statId === 3) { // Constitution (Barbarian Unarmored Defense)
+                const conScore = stats.constitution.total;
+                const conMod = Math.floor((conScore - 10) / 2);
+                unarmoredBaseAc = Math.max(unarmoredBaseAc, 10 + conMod);
+              } else if (mod.statId === 5) { // Wisdom (Monk Unarmored Defense)
+                const wisScore = stats.wisdom.total;
+                const wisMod = Math.floor((wisScore - 10) / 2);
+                unarmoredBaseAc = Math.max(unarmoredBaseAc, 10 + wisMod);
+              } else if (mod.value) { // e.g. Draconic Resilience (13)
+                unarmoredBaseAc = Math.max(unarmoredBaseAc, mod.value);
+              }
+            }
+          });
+        }
+      }
+    }
+  }
+
+  let baseAc = 10;
+  if (hasArmor) {
+    baseAc = armorBaseAc + Math.min(armorDexLimit, dexMod);
+  } else {
+    baseAc = unarmoredBaseAc + dexMod;
+  }
+
+  // Sum up all modifiers with subType === "armor-class" (e.g. Shield, Ring of Protection, Cloak of Protection, Defense Fighting Style)
+  let acBonus = 0;
+  let shieldBonusAlreadyInModifiers = false;
+  if (data.modifiers) {
+    for (const group in data.modifiers) {
+      if (Array.isArray(data.modifiers[group])) {
+        data.modifiers[group].forEach((mod: any) => {
+          if (mod.type === "bonus" && mod.subType === "armor-class") {
+            acBonus += mod.value || 0;
+            // Detect if this modifier is likely from a shield to prevent double-counting
+            const friendlySubName = (mod.friendlySubtypeName || "").toLowerCase();
+            const friendlyName = (mod.friendlyName || "").toLowerCase();
+            if (friendlySubName.includes("shield") || friendlyName.includes("shield")) {
+              shieldBonusAlreadyInModifiers = true;
+            }
+          }
+        });
+      }
+    }
+  }
+
+  // Add the shield bonus only if it was equipped and NOT already counted as a modifier
+  if (shieldAcBonus > 0 && !shieldBonusAlreadyInModifiers) {
+    baseAc += shieldAcBonus;
+  }
+
+  // Look for custom overrides/adjustments in characterValues
+  let overrideAc: number | null = null;
+  let adjustAc = 0;
+  if (data.characterValues && Array.isArray(data.characterValues)) {
+    data.characterValues.forEach((v: any) => {
+      if (v.typeId === 1) { // Override Armor Class
+        overrideAc = v.value;
+      } else if (v.typeId === 2) { // Adjust Armor Class
+        adjustAc = v.value;
+      }
+    });
+  }
+
+  let ac = (overrideAc !== null ? overrideAc : (baseAc + acBonus)) + adjustAc;
+
+  // 7. Spells
+  const rawSpellsList: any[] = [];
+
+  // Class spells (import ALL spells in their spellbook / list, but tag whether prepared)
+  if (Array.isArray(data.classSpells)) {
+    data.classSpells.forEach((cs: any) => {
+      if (Array.isArray(cs.spells)) {
+        cs.spells.forEach((s: any) => {
+          rawSpellsList.push({
+            ...s,
+            isPreparedFlag: !!s.prepared || !!s.alwaysPrepared || (s.definition && s.definition.level === 0) || cs.isLocked === true
+          });
+        });
+      }
+    });
+  }
+
+  // Race/Class/Feat/Item/etc spells inside data.spells (always active/prepared)
+  if (data.spells) {
+    for (const source in data.spells) {
+      if (Array.isArray(data.spells[source])) {
+        data.spells[source].forEach((s: any) => {
+          rawSpellsList.push({
+            ...s,
+            isPreparedFlag: true
+          });
+        });
+      }
+    }
+  }
+
+  const spellsMap = new Map<string, any>();
+  rawSpellsList.forEach((s: any) => {
+    const def = s.definition || {};
+    if (!def.name) return;
+
+    let castingTime = "Action";
+    if (def.activation) {
+      const typeNum = def.activation.activationType;
+      const timeVal = def.activation.activationTime;
+      const typeMap: Record<number, string> = {
+        1: "Action",
+        2: "Bonus Action",
+        3: "Reaction",
+        4: "Minute",
+        5: "Hour",
+        6: "Special",
+        7: "No Action",
+        8: "Minute"
+      };
+      castingTime = `${timeVal || 1} ${typeMap[typeNum] || "Action"}`;
+    }
+
+    const components: string[] = [];
+    if (Array.isArray(def.components)) {
+      if (def.components.includes(1)) components.push("V");
+      if (def.components.includes(2)) components.push("S");
+      if (def.components.includes(3)) components.push("M");
+    }
+
+    let range = "Self";
+    if (def.range) {
+      range = def.range.rangeValue ? `${def.range.rangeValue} ft` : (def.range.origin || "Self");
+    }
+
+    let duration = "Instantaneous";
+    if (def.duration) {
+      if (def.duration.durationType === "Concentration") {
+        duration = `Concentration, up to ${def.duration.durationInterval || 1} ${def.duration.durationUnit || "minute"}`;
+      } else if (def.duration.durationInterval) {
+        duration = `${def.duration.durationInterval} ${def.duration.durationUnit || ""}`.trim();
+      } else if (def.duration.durationType) {
+        duration = def.duration.durationType;
+      }
+    }
+
+    spellsMap.set(def.name, {
+      name: def.name,
+      level: def.level || 0,
+      school: (typeof def.school === "object" && def.school !== null) ? (def.school.name || "Evocation") : (def.school || "Evocation"),
+      description: stripHtml(def.description || def.snippet || ""),
+      range,
+      castingTime,
+      components,
+      duration,
+      prepared: !!s.isPreparedFlag,
+    });
+  });
+
+  const spells = Array.from(spellsMap.values());
+
+  const alignmentId = data.alignmentId;
+  const alignmentMap: Record<number, string> = {
+    1: "Lawful Good",
+    2: "Neutral Good",
+    3: "Chaotic Good",
+    4: "Lawful Neutral",
+    5: "Neutral",
+    6: "Chaotic Neutral",
+    7: "Lawful Evil",
+    8: "Neutral Evil",
+    9: "Chaotic Evil"
+  };
+  const alignment = alignmentMap[alignmentId] || "Neutral";
+
+  return {
+    name,
+    avatarUrl,
+    race,
+    classes,
+    classType: classes[0]?.className || "Fighter",
+    subclass: classes[0]?.subclass || undefined,
+    level,
+    alignment,
+    hp: {
+      max: maxHp,
+      current: currentHp,
+      temp: tempHp,
+    },
+    maxHp,
+    currentHp,
+    tempHp,
+    ac,
+    stats,
+    strength: stats.strength.total,
+    dexterity: stats.dexterity.total,
+    constitution: stats.constitution.total,
+    intelligence: stats.intelligence.total,
+    wisdom: stats.wisdom.total,
+    charisma: stats.charisma.total,
+    inventory,
+    spells,
+    magicItems: inventory
+      .filter((item: any) => item.isAttuned || (item.equipped && ["uncommon", "rare", "very rare", "legendary", "artifact"].includes(item.rarity?.toLowerCase() || "")))
+      .map((item: any) => item.name),
+    sourceType,
+    importedAt: new Date().toISOString(),
+  };
+}
+
+// 1. Auto API Import Route (Proxy to dndbeyond character-service)
+app.get("/api/import/auto", async (req, res) => {
+  try {
+    const query = req.query.query as string;
+    if (!query) {
+      return res.status(400).json({ error: "Missing character ID or URL" });
+    }
+
+    // Extract character ID (7 to 10 consecutive digits)
+    const idMatch = query.match(/\b\d{7,10}\b/);
+    if (!idMatch) {
+      return res.status(400).json({ error: "Could not extract a valid 7-10 digit D&D Beyond Character ID from input. Please ensure the URL or string has your character's ID." });
+    }
+
+    const characterId = idMatch[0];
+    const url = `https://character-service.dndbeyond.com/character/v5/character/${characterId}`;
+
+    console.log(`[D&D Beyond Importer] Fetching character ${characterId} from ${url}`);
+
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`D&D Beyond returned status ${response.status}`);
+    }
+
+    const json = await response.json();
+    if (json.success === false) {
+      return res.status(400).json({
+        error: json.message || "Failed to fetch character sheet",
+        isPrivate: json.message?.toLowerCase().includes("private") || false
+      });
+    }
+
+    const parsedData = parseDndBeyondJson(json, "auto");
+    return res.json(parsedData);
+  } catch (error: any) {
+    console.error("[D&D Beyond Importer] Auto import error:", error);
+    return res.status(500).json({
+      error: error.message || "An error occurred while connecting to D&D Beyond. The character sheet might be private or D&D Beyond might be blocking the server."
+    });
+  }
+});
+
+// 2. Paste JSON Import Route
+app.post("/api/import/paste-json", (req, res) => {
+  try {
+    const { json } = req.body;
+    if (!json) {
+      return res.status(400).json({ error: "Empty JSON content" });
+    }
+
+    let parsedJson;
+    if (typeof json === "string") {
+      parsedJson = JSON.parse(json);
+    } else {
+      parsedJson = json;
+    }
+
+    const parsedData = parseDndBeyondJson(parsedJson, "pasted_json");
+    return res.json(parsedData);
+  } catch (error: any) {
+    console.error("[D&D Beyond Importer] Paste JSON parse error:", error);
+    return res.status(400).json({ error: `Invalid JSON structure: ${error.message}` });
+  }
+});
+
+// Schema for Gemini JSON output matching our CharacterData interface
+const geminiResponseSchema = {
+  type: Type.OBJECT,
+  properties: {
+    name: { type: Type.STRING, description: "Name of the character" },
+    race: { type: Type.STRING, description: "Race of the character (e.g., Human, Elf, Dwarf, Tiefling)" },
+    classes: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          className: { type: Type.STRING, description: "The class name, e.g., Fighter, Rogue, Wizard, Cleric" },
+          level: { type: Type.INTEGER, description: "Level of this class" },
+          subclass: { type: Type.STRING, description: "Subclass if mentioned, e.g., Assassin, School of Evocation" },
+        },
+        required: ["className", "level"],
+      }
+    },
+    level: { type: Type.INTEGER, description: "Total character level (sum of all class levels)" },
+    ac: { type: Type.INTEGER, description: "Armor Class (AC) of the character, usually 10-22" },
+    hp: {
+      type: Type.OBJECT,
+      properties: {
+        max: { type: Type.INTEGER, description: "Maximum Hit Points" },
+        current: { type: Type.INTEGER, description: "Current Hit Points (defaults to max)" },
+        temp: { type: Type.INTEGER, description: "Temporary Hit Points (defaults to 0)" },
+      },
+      required: ["max", "current", "temp"]
+    },
+    stats: {
+      type: Type.OBJECT,
+      properties: {
+        strength: {
+          type: Type.OBJECT,
+          properties: {
+            base: { type: Type.INTEGER, description: "Base score (usually 3-20)" },
+            bonus: { type: Type.INTEGER, description: "Racial or ASI bonuses" },
+            override: { type: Type.INTEGER, description: "Override score, defaults to 0" },
+            total: { type: Type.INTEGER, description: "Final combined score" }
+          },
+          required: ["base", "bonus", "override", "total"]
+        },
+        dexterity: {
+          type: Type.OBJECT,
+          properties: {
+            base: { type: Type.INTEGER },
+            bonus: { type: Type.INTEGER },
+            override: { type: Type.INTEGER },
+            total: { type: Type.INTEGER }
+          },
+          required: ["base", "bonus", "override", "total"]
+        },
+        constitution: {
+          type: Type.OBJECT,
+          properties: {
+            base: { type: Type.INTEGER },
+            bonus: { type: Type.INTEGER },
+            override: { type: Type.INTEGER },
+            total: { type: Type.INTEGER }
+          },
+          required: ["base", "bonus", "override", "total"]
+        },
+        intelligence: {
+          type: Type.OBJECT,
+          properties: {
+            base: { type: Type.INTEGER },
+            bonus: { type: Type.INTEGER },
+            override: { type: Type.INTEGER },
+            total: { type: Type.INTEGER }
+          },
+          required: ["base", "bonus", "override", "total"]
+        },
+        wisdom: {
+          type: Type.OBJECT,
+          properties: {
+            base: { type: Type.INTEGER },
+            bonus: { type: Type.INTEGER },
+            override: { type: Type.INTEGER },
+            total: { type: Type.INTEGER }
+          },
+          required: ["base", "bonus", "override", "total"]
+        },
+        charisma: {
+          type: Type.OBJECT,
+          properties: {
+            base: { type: Type.INTEGER },
+            bonus: { type: Type.INTEGER },
+            override: { type: Type.INTEGER },
+            total: { type: Type.INTEGER }
+          },
+          required: ["base", "bonus", "override", "total"]
+        },
+      },
+      required: ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
+    },
+    inventory: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          name: { type: Type.STRING, description: "Name of the item" },
+          description: { type: Type.STRING, description: "Brief description of the item" },
+          quantity: { type: Type.INTEGER, description: "Quantity in inventory" },
+          equipped: { type: Type.BOOLEAN, description: "Whether the item is currently equipped" },
+          type: { type: Type.STRING, description: "e.g., Weapon, Armor, Ring, Potion, Gear, Tool" },
+          rarity: { type: Type.STRING, description: "Common, Uncommon, Rare, Very Rare, Legendary, Artifact" }
+        },
+        required: ["name", "description", "quantity", "equipped"]
+      }
+    },
+    spells: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          name: { type: Type.STRING, description: "Name of the spell" },
+          level: { type: Type.INTEGER, description: "Level of the spell (0 for Cantrip, 1-9 for spell level)" },
+          school: { type: Type.STRING, description: "e.g., Evocation, Abjuration, Necromancy" },
+          description: { type: Type.STRING, description: "Description or effect of the spell" },
+          range: { type: Type.STRING, description: "Range, e.g., 60 ft, Self, Touch, 120 ft" },
+          castingTime: { type: Type.STRING, description: "Casting time, e.g., 1 Action, 1 Bonus Action, 1 Reaction" },
+          components: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: "Spell components, e.g., V, S, M"
+          }
+        },
+        required: ["name", "level", "description"]
+      }
+    }
+  },
+  required: ["name", "race", "classes", "level", "ac", "hp", "stats", "inventory", "spells"]
+};
+
+// 3. AI Parsing Route
+app.post("/api/import/ai", async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || text.trim().length < 20) {
+      return res.status(400).json({ error: "The provided character text is too short or empty." });
+    }
+
+    console.log("[D&D Beyond Importer] Sending pasted character sheet text to Gemini for structured extraction");
+
+    const prompt = `Analyze the following copy-pasted text from a D&D character sheet or PDF.
+Extract all relevant character information including:
+1. Basic Details (Name, Race, Classes and levels)
+2. Ability Scores (Strength, Dexterity, Constitution, Intelligence, Wisdom, Charisma). Calculate or guess the split of base, bonus, override, and total if not explicitly stated (total is mandatory).
+3. Armor Class (AC) - look for Shield, Armor, or default Dex-based calculation (usually 10-22)
+4. Hit Points (Max, Current, Temp)
+5. Inventory items (Name, quantity, description/effects, equipped state, item type, rarity)
+6. Spells (Name, level, school, description/effects, range, casting time, V/S/M components)
+
+Input Text:
+${text}
+`;
+
+    const response = await generateContentWithRetry({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        systemInstruction: "You are a professional D&D 5e mechanics parser. Extract data accurately from messy copy-pasted character sheets into the requested structured JSON. Ensure no lists are truncated. Keep item/spell descriptions concise but informative.",
+        responseMimeType: "application/json",
+        responseSchema: geminiResponseSchema,
+      }
+    });
+
+    const parsedJson = JSON.parse(response.text.trim());
+    
+    // Enrich with metadata
+    parsedJson.sourceType = "ai_parsed";
+    parsedJson.importedAt = new Date().toISOString();
+
+    return res.json(parsedJson);
+  } catch (error: any) {
+    console.error("[D&D Beyond Importer] Gemini AI parser error:", error);
+    return res.status(500).json({
+      error: `AI parsing failed: ${error.message || "The AI could not convert your input to standard D&D stats."}`
+    });
   }
 });
 

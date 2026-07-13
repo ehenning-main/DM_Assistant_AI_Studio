@@ -48,12 +48,22 @@ export interface HeroCharacter {
   name: string;
   classType: string; // Class like Fighter, Wizard, Paladin, Cleric, etc.
   subclass?: string;
+  classes?: Array<{
+    className: string;
+    level: number;
+    subclass?: string;
+    domain?: string;
+    school?: string;
+    specialization?: string; // e.g., Divine Oath, Warlock Patron, Druid Circle
+  }>;
   level: number;
   maxHp: number;
   currentHp: number;
+  tempHp?: number;
   ac: number;
   playerName?: string;
   alignment?: string;
+  race?: string;
   passivePerception?: number;
   activeStatus?: string; // e.g. "Healthy", "Poisoned", "Unconscious", "Exhausted"
   strength?: number;
@@ -64,6 +74,31 @@ export interface HeroCharacter {
   charisma?: number;
   magicItems: string[]; // Current roster of magic items
   history: HeroProgressionRecord[];
+  dndBeyondUrl?: string;
+  avatarUrl?: string;
+  inventory?: Array<{
+    name: string;
+    description: string;
+    quantity: number;
+    equipped: boolean;
+    type?: string;
+    rarity?: string;
+    weight?: number;
+    isAttuned?: boolean;
+  }>;
+  spells?: Array<{
+    name: string;
+    level: number;
+    school?: string;
+    description: string;
+    range?: string;
+    castingTime?: string;
+    components?: string[];
+    duration?: string;
+    prepared?: boolean;
+  }>;
+  sourceType?: "auto" | "pasted_json" | "ai_parsed";
+  importedAt?: string;
 }
 
 export interface Session {
