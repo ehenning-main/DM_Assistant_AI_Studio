@@ -97,6 +97,7 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
   const [syncNotes, setSyncNotes] = useState<string | null>(campaign.dndBeyondNotes || null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncSuccessMessage, setSyncSuccessMessage] = useState<string | null>(null);
+  const [showCampaignLinkerModal, setShowCampaignLinkerModal] = useState(false);
 
   // --- NEW MULTI-TAB IMPORTER STATES FOR ADD HERO MODAL ---
   const [importerActiveTab, setImporterActiveTab] = useState<"manual" | "auto" | "ai" | "json">("manual");
@@ -1279,186 +1280,266 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
 
   return (
     <div className="space-y-6" id="hero-party-tracker-root">
-      
-      {/* D&D BEYOND CAMPAIGN REALM LINKER */}
-      <div className="bg-zinc-950 border-l-4 border-l-red-500/85 border-y border-r border-zinc-850 rounded-xl p-5 space-y-4 shadow-[0_12px_24px_-10px_rgba(239,68,68,0.1)] relative overflow-hidden transition-all duration-300" id="dndbeyond-linker-panel">
-        <div className="absolute top-0 right-0 w-32 h-32 bg-red-500/5 rounded-full blur-2xl pointer-events-none" />
-        <div className="absolute bottom-0 left-0 w-32 h-32 bg-purple-500/5 rounded-full blur-2xl pointer-events-none" />
-
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3.5 border-b border-zinc-850 gap-3">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-red-500/10 text-red-500 rounded-lg border border-red-500/20">
-              <Link2 className="w-5 h-5 shrink-0" />
-            </div>
-            <div>
-              <h3 className="text-sm font-fantasy font-extrabold tracking-wider text-zinc-100 uppercase flex items-center gap-2">
-                D&D Beyond Campaign Linker
-              </h3>
-              <p className="text-[10px] font-mono text-zinc-500">
-                Synchronize player characters, active stats & DM chronicle scrolls
-              </p>
-            </div>
+      {/* D&D BEYOND CAMPAIGN REALM LINKER BAR */}
+      <div className="bg-zinc-950 border border-zinc-850 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-[0_8px_20px_-6px_rgba(239,68,68,0.08)] relative overflow-hidden transition-all duration-300" id="dndbeyond-linker-panel">
+        <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/5 rounded-full blur-2xl pointer-events-none" />
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="p-2 bg-red-500/10 text-red-500 rounded-lg border border-red-500/20 shrink-0">
+            <Link2 className="w-5 h-5 shrink-0" />
           </div>
-          
-          {campaign.dndBeyondUrl && (
-            <span className="inline-flex self-start sm:self-center items-center gap-1.5 px-2.5 py-1 bg-emerald-950/40 border border-emerald-500/25 text-[10px] font-mono text-emerald-400 rounded-full select-none">
-              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
-              Connected Campaign Link Active
-            </span>
-          )}
-        </div>
-
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-            <div className="md:col-span-8 relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-zinc-500">
-                <Globe className="w-4 h-4" />
-              </div>
-              <input
-                type="text"
-                id="dndbeyond-url-input"
-                placeholder="Paste D&D Beyond campaign link (e.g. https://www.dndbeyond.com/campaigns/1234567)"
-                value={dndBeyondUrl}
-                onChange={(e) => setDndBeyondUrl(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-9 pr-3 py-2 text-xs text-zinc-100 focus:border-red-500 focus:outline-none placeholder:text-zinc-650 font-sans"
-              />
-            </div>
-            <div className="md:col-span-4 flex gap-2">
-              <button
-                onClick={handleSyncDndBeyond}
-                disabled={dndSyncLoading}
-                className="flex-1 py-2 bg-red-650 hover:bg-red-700 disabled:bg-zinc-900 disabled:text-zinc-600 border border-red-500/30 text-zinc-100 text-xs font-mono font-bold tracking-wider rounded-lg shadow-md cursor-pointer transition duration-150 flex items-center justify-center gap-1.5"
-              >
-                {dndSyncLoading ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-3.5 h-3.5" />
-                )}
-                {campaign.dndBeyondUrl ? "Re-Sync Roster" : "Gather Companions"}
-              </button>
-              
-              {campaign.dndBeyondUrl && (
-                <button
-                  onClick={handleDisconnectDndBeyond}
-                  disabled={dndSyncLoading}
-                  className="px-3.5 py-2 bg-zinc-900 hover:bg-zinc-850 hover:text-red-400 text-zinc-400 text-xs font-mono border border-zinc-800 rounded-lg cursor-pointer transition duration-150"
-                  title="Disconnect Campaign Link"
-                >
-                  Disconnect
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Sync Failures & Fallback Paste Container */}
-          {syncError && (
-            <div className="p-4 bg-red-950/20 border border-red-500/20 rounded-lg text-xs space-y-2.5 animate-fadeIn">
-              <div className="flex items-start gap-2.5 text-red-400">
-                <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
-                <div className="space-y-1">
-                  <p className="font-semibold uppercase tracking-wider font-fantasy">Automated Scribe Blocked</p>
-                  <p className="text-zinc-350 font-sans leading-relaxed">{syncError}</p>
-                </div>
-              </div>
-              {!showPasteFallback && (
-                <div className="pt-1.5">
-                  <button
-                    onClick={() => {
-                      setShowPasteFallback(true);
-                      setSyncError(null);
-                    }}
-                    className="px-3 py-1.5 bg-red-950/40 hover:bg-red-950 border border-red-500/30 text-red-300 rounded font-mono text-[10px] cursor-pointer"
-                  >
-                    Bypass with Direct Web Source Paste &rarr;
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Paste source fallback panel */}
-          {(showPasteFallback || !campaign.dndBeyondUrl) && (
-            <div className="p-4 bg-zinc-950/80 border border-zinc-850 rounded-lg space-y-3.5 font-sans">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-mono text-zinc-400 uppercase font-bold tracking-widest flex items-center gap-1.5">
-                  <FileText className="w-4 h-4 text-purple-400 animate-pulse" /> Manual Webpage Source Synclink
+          <div className="min-w-0">
+            <h3 className="text-xs font-fantasy font-extrabold tracking-wider text-zinc-100 uppercase flex items-center gap-2">
+              D&D Beyond Campaign Linker
+            </h3>
+            {campaign.dndBeyondUrl ? (
+              <div className="flex items-center gap-2 mt-0.5 min-w-0">
+                <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400 font-semibold bg-emerald-950/30 px-1.5 py-0.5 rounded border border-emerald-500/10 shrink-0">
+                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                  Linked
                 </span>
-                <span className="text-[9px] font-mono text-zinc-500 italic">Cloudflare Bypass Mode</span>
-              </div>
-              <div className="text-[11px] text-zinc-400 font-sans space-y-1.5 leading-relaxed p-3 bg-zinc-950/40 border border-zinc-900 rounded-lg">
-                <p>
-                  D&D Beyond campaign dashboards are sometimes shielded by secure credentials or anti-bot protections. Follow these simple steps to import instantly:
-                </p>
-                <ol className="list-decimal pl-5 space-y-1 text-zinc-400">
-                  <li>Open your campaign page on <strong className="text-zinc-200">dndbeyond.com</strong> in a new browser tab.</li>
-                  <li>Right-click anywhere on the campaign dashboard and select <strong className="text-zinc-200">"View Page Source"</strong> (or press <kbd className="bg-zinc-850 text-zinc-300 px-1 py-0.5 rounded text-[10px] font-mono">Ctrl + U</kbd> / <kbd className="bg-zinc-850 text-zinc-300 px-1 py-0.5 rounded text-[10px] font-mono">Cmd + U</kbd>).</li>
-                  <li>Select everything with <kbd className="bg-zinc-850 text-zinc-300 px-1 py-0.5 rounded text-[10px] font-mono">Ctrl + A</kbd>, copy it, and paste it fully in the vessel below.</li>
-                </ol>
-              </div>
-              <textarea
-                id="dnd-pasted-html-textarea"
-                placeholder="Paste the full raw webpage source HTML starting with <!DOCTYPE html> here..."
-                value={pastedHtml}
-                onChange={(e) => setPastedHtml(e.target.value)}
-                className="w-full h-28 bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-[10px] font-mono text-zinc-300 focus:border-purple-500 focus:outline-none placeholder:text-zinc-705 leading-normal"
-              />
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleSyncWithPastedHtml}
-                  disabled={!pastedHtml.trim() || dndSyncLoading}
-                  className="px-4 py-2 bg-purple-900/40 hover:bg-purple-900 disabled:bg-zinc-900 disabled:text-zinc-600 text-purple-200 border border-purple-550 hover:border-purple-500/40 text-xs font-mono font-bold tracking-wider rounded-lg cursor-pointer transition duration-150 flex items-center gap-1.5 select-none"
+                <a
+                  href={campaign.dndBeyondUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] font-sans text-zinc-400 hover:text-red-400 transition truncate underline"
                 >
-                  {dndSyncLoading ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-purple-400" />
-                  ) : (
-                    <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                  )}
-                  Synthesize Copied Source
-                </button>
-                {showPasteFallback && (
-                  <button
-                    type="button"
-                    onClick={() => setShowPasteFallback(false)}
-                    className="px-3.5 py-2 text-zinc-500 hover:text-zinc-300 text-xs font-mono transition"
-                  >
-                    Hide Paste Shield
-                  </button>
-                )}
+                  {campaign.dndBeyondUrl}
+                </a>
               </div>
-            </div>
-          )}
-
-          {/* Alignment Details & Logs */}
-          {syncSuccessMessage && (
-            <div className="p-4 bg-emerald-950/20 border border-emerald-500/25 rounded-lg text-xs space-y-3 animate-fadeIn">
-              <div className="flex items-center gap-2 text-emerald-400">
-                <Check className="w-4 h-4 text-emerald-500 animate-bounce" />
-                <span className="font-fantasy font-black tracking-widest text-sm uppercase">Synchronized Campaign Roster Aligned!</span>
-              </div>
-              <p className="text-zinc-300 font-sans leading-normal">
-                {syncSuccessMessage}
+            ) : (
+              <p className="text-[10px] font-sans text-zinc-500 mt-0.5">
+                No active campaign link connected to this realm.
               </p>
-              {syncLogs.length > 0 && (
-                <div className="space-y-1.5 pl-3 border-l-2 border-emerald-500/35 font-sans text-xs">
-                  {syncLogs.map((log, idx) => (
-                    <p key={idx} className="text-zinc-350 leading-relaxed" dangerouslySetInnerHTML={{ __html: log.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') }} />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Sync Notes */}
-          {syncNotes && syncNotes !== "N/A" && (
-            <div className="p-4 bg-zinc-950/60 border border-zinc-850 rounded-lg space-y-2">
-              <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider font-extrabold block">📖 DM Campaign Notes & Scrolls</span>
-              <div className="text-zinc-300 font-sans text-xs whitespace-pre-line leading-relaxed max-h-36 overflow-y-auto pr-1">
-                {syncNotes}
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
+
+        <button
+          onClick={() => {
+            setSyncError(null);
+            setSyncSuccessMessage(null);
+            setShowCampaignLinkerModal(true);
+          }}
+          className="px-4 py-2 bg-zinc-900 hover:bg-red-950/20 text-zinc-200 hover:text-red-400 border border-zinc-800 hover:border-red-900/40 rounded-lg text-xs font-mono font-bold uppercase tracking-wider transition cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+        >
+          <Settings className="w-3.5 h-3.5" />
+          <span>{campaign.dndBeyondUrl ? "Manage Link" : "Link Campaign"}</span>
+        </button>
+
+        {/* POP UP MODAL WINDOW */}
+        <AnimatePresence>
+          {showCampaignLinkerModal && (
+            <div className="fixed inset-0 bg-zinc-950/85 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                transition={{ duration: 0.2 }}
+                className="bg-zinc-900 border border-zinc-800 rounded-xl max-w-xl w-full shadow-2xl relative overflow-hidden font-sans p-6 space-y-4"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="absolute top-0 right-0 w-32 h-32 bg-red-500/5 rounded-full blur-2xl pointer-events-none" />
+                
+                {/* Header */}
+                <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 bg-red-500/15 text-red-500 rounded border border-red-500/20">
+                      <Link2 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-fantasy font-black tracking-wider text-zinc-100 uppercase">
+                        ⚔️ D&D Beyond Codex Linker
+                      </h3>
+                      <p className="text-[10px] font-mono text-zinc-500">
+                        Add, edit, or disconnect your campaign database
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowCampaignLinkerModal(false)}
+                    className="p-1.5 bg-zinc-950 hover:bg-zinc-850 border border-zinc-850 rounded-lg text-zinc-400 hover:text-zinc-200 transition cursor-pointer"
+                    title="Close Realm Linker"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Form fields */}
+                <div className="space-y-4 pt-1">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider font-semibold block">
+                      Campaign URL / Roster Portal
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-zinc-500">
+                        <Globe className="w-4 h-4" />
+                      </div>
+                      <input
+                        type="text"
+                        id="dndbeyond-url-input"
+                        placeholder="e.g. https://www.dndbeyond.com/campaigns/1234567"
+                        value={dndBeyondUrl}
+                        onChange={(e) => setDndBeyondUrl(e.target.value)}
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-9 pr-3 py-2 text-xs text-zinc-100 focus:border-red-500 focus:outline-none placeholder:text-zinc-650 font-sans"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Operational Actions */}
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <button
+                      onClick={handleSyncDndBeyond}
+                      disabled={dndSyncLoading}
+                      className="flex-1 py-2 bg-red-650 hover:bg-red-700 disabled:bg-zinc-900 disabled:text-zinc-600 border border-red-500/30 text-zinc-100 text-xs font-mono font-bold tracking-wider rounded-lg shadow-md cursor-pointer transition duration-150 flex items-center justify-center gap-1.5"
+                    >
+                      {dndSyncLoading ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      )}
+                      {campaign.dndBeyondUrl ? "Full Re-Sync Roster" : "Sync & Gather Companions"}
+                    </button>
+
+                    <button
+                      onClick={async () => {
+                        setDndSyncLoading(true);
+                        setSyncError(null);
+                        setSyncSuccessMessage(null);
+                        try {
+                          const updatedCamp: Campaign = {
+                            ...campaign,
+                            dndBeyondUrl: dndBeyondUrl.trim(),
+                            updatedAt: new Date().toISOString()
+                          };
+                          await onUpdateCampaign(updatedCamp);
+                          setSyncSuccessMessage("Campaign URL successfully saved to scroll!");
+                        } catch (err: any) {
+                          setSyncError("Failed to save campaign URL.");
+                        } finally {
+                          setDndSyncLoading(false);
+                        }
+                      }}
+                      disabled={dndSyncLoading || !dndBeyondUrl.trim()}
+                      className="py-2 px-3.5 bg-zinc-800 hover:bg-zinc-750 disabled:bg-zinc-900 disabled:text-zinc-650 border border-zinc-700 text-zinc-200 text-xs font-mono font-semibold rounded-lg cursor-pointer transition duration-150 flex items-center justify-center gap-1"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      Save Link Only
+                    </button>
+                    
+                    {campaign.dndBeyondUrl && (
+                      <button
+                        onClick={async () => {
+                          if (confirm("Are you sure you want to sever the D&D Beyond linkage? This will remove the campaign portal and clear associated campaign scrolls.")) {
+                            await handleDisconnectDndBeyond();
+                          }
+                        }}
+                        disabled={dndSyncLoading}
+                        className="py-2 px-3 bg-zinc-950 hover:bg-red-950/30 hover:text-red-400 border border-zinc-850 hover:border-red-900/40 text-zinc-450 text-xs font-mono rounded-lg cursor-pointer transition duration-150"
+                        title="Disconnect Campaign Link"
+                      >
+                        Disconnect Link
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Sync Failures & Fallback Paste Container */}
+                  {syncError && (
+                    <div className="p-4 bg-red-950/20 border border-red-500/20 rounded-lg text-xs space-y-2.5 animate-fadeIn">
+                      <div className="flex items-start gap-2.5 text-red-400">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                        <div className="space-y-1">
+                          <p className="font-semibold uppercase tracking-wider font-fantasy">Automated Scribe Blocked</p>
+                          <p className="text-zinc-350 font-sans leading-relaxed text-[11px]">{syncError}</p>
+                        </div>
+                      </div>
+                      {!showPasteFallback && (
+                        <div className="pt-1.5">
+                          <button
+                            onClick={() => {
+                              setShowPasteFallback(true);
+                              setSyncError(null);
+                            }}
+                            className="px-3 py-1.5 bg-red-950/40 hover:bg-red-950 border border-red-500/30 text-red-300 rounded font-mono text-[10px] cursor-pointer"
+                          >
+                            Bypass with Direct Web Source Paste &rarr;
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Paste source fallback panel */}
+                  {(showPasteFallback || !campaign.dndBeyondUrl) && (
+                    <div className="p-3 bg-zinc-950 border border-zinc-850 rounded-lg space-y-3 font-sans">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono text-zinc-400 uppercase font-bold tracking-widest flex items-center gap-1.5">
+                          <FileText className="w-4 h-4 text-purple-400 animate-pulse" /> Manual Webpage Source Sync
+                        </span>
+                        <span className="text-[9px] font-mono text-zinc-500 italic">Cloudflare Bypass Mode</span>
+                      </div>
+                      <div className="text-[10px] text-zinc-400 font-sans space-y-1 leading-normal p-2.5 bg-zinc-900/40 border border-zinc-900 rounded">
+                        <p>
+                          Open campaign on <strong className="text-zinc-200">dndbeyond.com</strong>, right-click &rarr; <strong>"View Page Source"</strong> (or press <kbd className="bg-zinc-850 text-zinc-300 px-1 rounded text-[9px] font-mono">Ctrl/Cmd + U</kbd>), copy everything (<kbd className="bg-zinc-850 text-zinc-300 px-1 rounded text-[9px] font-mono">Ctrl/Cmd + A</kbd>), and paste below:
+                        </p>
+                      </div>
+                      <textarea
+                        id="dnd-pasted-html-textarea"
+                        placeholder="Paste the full raw HTML here..."
+                        value={pastedHtml}
+                        onChange={(e) => setPastedHtml(e.target.value)}
+                        className="w-full h-24 bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-[10px] font-mono text-zinc-300 focus:border-purple-500 focus:outline-none placeholder:text-zinc-700 leading-normal"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={handleSyncWithPastedHtml}
+                          disabled={!pastedHtml.trim() || dndSyncLoading}
+                          className="px-3.5 py-1.5 bg-purple-900/40 hover:bg-purple-900 disabled:bg-zinc-900 disabled:text-zinc-650 text-purple-200 border border-purple-500/30 text-xs font-mono font-bold tracking-wider rounded-lg cursor-pointer transition duration-150 flex items-center gap-1 select-none"
+                        >
+                          {dndSyncLoading ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-purple-400" />
+                          ) : (
+                            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                          )}
+                          Synthesize Copied Source
+                        </button>
+                        {showPasteFallback && (
+                          <button
+                            type="button"
+                            onClick={() => setShowPasteFallback(false)}
+                            className="px-3 py-1.5 text-zinc-500 hover:text-zinc-300 text-xs font-mono transition"
+                          >
+                            Hide Panel
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Alignment Details & Logs */}
+                  {syncSuccessMessage && (
+                    <div className="p-4 bg-emerald-950/20 border border-emerald-500/25 rounded-lg text-xs space-y-2.5 animate-fadeIn">
+                      <div className="flex items-center gap-2 text-emerald-400">
+                        <Check className="w-4 h-4 text-emerald-500" />
+                        <span className="font-fantasy font-black tracking-widest text-xs uppercase">Roster Aligned!</span>
+                      </div>
+                      <p className="text-zinc-300 font-sans text-[11px] leading-normal">
+                        {syncSuccessMessage}
+                      </p>
+                      {syncLogs.length > 0 && (
+                        <div className="space-y-1 pl-2 border-l-2 border-emerald-500/35 font-sans text-[11px] max-h-36 overflow-y-auto">
+                          {syncLogs.map((log, idx) => (
+                            <p key={idx} className="text-zinc-350 leading-relaxed" dangerouslySetInnerHTML={{ __html: log.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') }} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* 1. COMPOSITE PARTY OVERVIEW STATS BOARD */}
