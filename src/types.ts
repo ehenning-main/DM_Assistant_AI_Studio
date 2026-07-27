@@ -119,4 +119,5 @@ export interface Session {
   characters: CharacterItem[];
   createdAt: any; // Firestore Timestamp on save
   updatedAt: any;
+  order?: number;
 }
