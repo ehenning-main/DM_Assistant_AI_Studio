@@ -20,6 +20,7 @@ export interface CharacterItem {
   charisma?: number;
   skills_or_actions?: string;
   isCustomStatsCreated?: boolean;
+  previousChapters?: Array<{ id: string; title: string; date: string }>;
 }
 
 export interface Campaign {

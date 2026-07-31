@@ -1,14 +1,25 @@
 import React, { useState } from "react";
 import { Image, Sparkles, Loader2, Trash2, Edit2, Check, X, AlertCircle } from "lucide-react";
-import { HighlightItem } from "../types";
+import { HighlightItem, CharacterItem, HeroCharacter } from "../types";
 import { motion, AnimatePresence } from "motion/react";
 
 interface HighlightSectionProps {
   highlights: HighlightItem[];
   onChange: (updated: HighlightItem[]) => void;
+  sessionSummary?: string;
+  characters?: CharacterItem[];
+  campaignHeroes?: HeroCharacter[];
+  previousHighlights?: HighlightItem[];
 }
 
-export function HighlightSection({ highlights, onChange }: HighlightSectionProps) {
+export function HighlightSection({
+  highlights,
+  onChange,
+  sessionSummary,
+  characters,
+  campaignHeroes,
+  previousHighlights,
+}: HighlightSectionProps) {
   const [prompt, setPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -19,6 +30,46 @@ export function HighlightSection({ highlights, onChange }: HighlightSectionProps
   const [showManualAdder, setShowManualAdder] = useState(false);
   const [manualUrl, setManualUrl] = useState("");
   const [manualCaption, setManualCaption] = useState("");
+  const [continuityGenerating, setContinuityGenerating] = useState(false);
+
+  // Action: One-button generator based on session summary with character & visual continuity
+  async function generateContinuityHighlight() {
+    if (!sessionSummary) return;
+
+    setContinuityGenerating(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch("/api/generate-continuity-illustration", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          summary: sessionSummary,
+          characters: characters || [],
+          previousHighlights: previousHighlights || [],
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to generate continuity illustration.");
+      }
+
+      const data = await res.json();
+      
+      const newHighlight: HighlightItem = {
+        id: "highlight-continuity-" + Date.now(),
+        imageUrl: data.imageUrl,
+        caption: data.caption || `Chronicle: ${data.optimizedPrompt?.substring(0, 80)}...`,
+      };
+
+      onChange([...highlights, newHighlight]);
+    } catch (error: any) {
+      console.error(error);
+      setErrorMsg(error.message);
+    } finally {
+      setContinuityGenerating(false);
+    }
+  }
 
   // Action: Generates a highlight item
   async function generateHighlight(e: React.FormEvent) {
@@ -95,7 +146,7 @@ export function HighlightSection({ highlights, onChange }: HighlightSectionProps
   }
 
   return (
-    <div className="space-y-4 p-5 bg-zinc-900 border border-zinc-800 rounded-lg parchment-glow" id="highlight-panel">
+    <div className="space-y-4 p-5 bg-zinc-900 border border-zinc-800 rounded-lg parchment-glow transition duration-300 hover:shadow-[0_12px_24px_-8px_rgba(245,158,11,0.06)]" id="highlight-panel">
       <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
         <div className="flex items-center gap-2">
           <Image className="w-5 h-5 text-red-500 animate-pulse" />
@@ -111,6 +162,48 @@ export function HighlightSection({ highlights, onChange }: HighlightSectionProps
       <p className="text-zinc-400 text-xs leading-relaxed">
         Summon the creative spirits of GenAI to craft stunning conceptual art representing critical NPC encounters, magic items, or epic battle scenes. These visuals will be preserved in the campaign journal forever.
       </p>
+
+      {/* ONE-BUTTON CHRONICLE ILLUSTRATION GENERATOR */}
+      {sessionSummary ? (
+        <div className="bg-gradient-to-br from-amber-950/20 via-zinc-950/80 to-amber-900/10 p-4 border border-amber-500/15 rounded-lg space-y-3 relative overflow-hidden shadow-lg transition duration-300 hover:border-amber-500/25">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(245,158,11,0.06),transparent)] pointer-events-none" />
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 relative z-10">
+            <div className="text-left space-y-1">
+              <span className="text-[9px] font-mono font-bold tracking-widest text-amber-500 uppercase">
+                📜 CONTINUITY-AWARE INKPORTAL
+              </span>
+              <h4 className="text-xs font-semibold font-fantasy text-zinc-200 tracking-wider">
+                AUTO-CHRONICLE SESSION SCENE
+              </h4>
+              <p className="text-[10px] text-zinc-400 font-sans leading-relaxed max-w-sm">
+                Generates a grand masterpiece based directly on this session's summary, referencing character descriptions and previous illustrations to maintain portrait continuity.
+              </p>
+            </div>
+            <button
+              onClick={generateContinuityHighlight}
+              disabled={continuityGenerating || !sessionSummary}
+              className="w-full sm:w-auto px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:from-zinc-800 disabled:to-zinc-850 disabled:text-zinc-650 text-zinc-950 font-sans font-bold text-xs uppercase tracking-wider rounded shadow-md hover:shadow-amber-500/10 active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer border border-amber-300/20 whitespace-nowrap"
+              id="btn-continuity-illustration"
+            >
+              {continuityGenerating ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-zinc-950" />
+                  <span>Casting Paint...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 animate-pulse text-zinc-950" />
+                  <span>Forge Chronicle Art</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="p-3.5 bg-zinc-950/40 border border-zinc-850 rounded-lg text-center text-zinc-500 text-[10px] font-mono">
+          ⚠️ Complete and save the Chronicle Overview summary first to enable the continuity generator!
+        </div>
+      )}
 
       {/* Generator Prompt Form */}
       <form onSubmit={generateHighlight} className="space-y-2">
