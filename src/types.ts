@@ -2,6 +2,7 @@ export interface HighlightItem {
   id: string;
   imageUrl: string;
   caption: string;
+  optimizedPrompt?: string;
 }
 
 export interface CharacterItem {
@@ -20,6 +21,7 @@ export interface CharacterItem {
   charisma?: number;
   skills_or_actions?: string;
   isCustomStatsCreated?: boolean;
+  previousChapters?: Array<{ id: string; title: string; date: string }>;
 }
 
 export interface Campaign {

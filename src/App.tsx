@@ -25,6 +25,7 @@ import {
   Edit,
   Compass,
   ArrowUpDown,
+  Search,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -49,6 +50,8 @@ import { VideoSection } from "./components/VideoSection";
 import { CharacterTracker } from "./components/CharacterTracker";
 import { MediaForgeWizard } from "./components/MediaForgeWizard";
 import { HeroPartyTracker } from "./components/HeroPartyTracker";
+import { ChronicleSummarySection } from "./components/ChronicleSummarySection";
+import { CampaignSearchConsole } from "./components/CampaignSearchConsole";
 
 export default function App() {
   // Authentication & Isomorphic engine states
@@ -524,6 +527,7 @@ export default function App() {
           title: sessionTitle,
           date: sessionDate,
           notes: notes,
+          playerNotes: playerNotes,
           audioTranscription: audioTranscription,
         }),
       });
@@ -553,6 +557,39 @@ export default function App() {
     }
   }
 
+  // Action: Appends canonical decree to DM Notes for a session chapter
+  async function handleAppendCanonicalDecree(sessionId: string, decreeText: string) {
+    const sessionToUpdate = sessions.find((s) => s.id === sessionId) || selectedSession;
+    if (!sessionToUpdate) return;
+
+    const timestamp = new Date().toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+
+    const canonicalBlock = `\n\n---\n📜 OFFICIAL CANONICAL DECREE (${timestamp}):\n${decreeText}\n---`;
+
+    const updatedNotes = (sessionToUpdate.notes || "") + canonicalBlock;
+
+    const updated: Session = {
+      ...sessionToUpdate,
+      notes: updatedNotes,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await updateExistingSession(updated);
+
+    if (selectedSession && selectedSession.id === sessionId) {
+      setSelectedSession(updated);
+      setNotes(updatedNotes);
+    }
+
+    setSessions((prev) =>
+      prev.map((s) => (s.id === sessionId ? updated : s))
+    );
+  }
+
   async function handleResetSummary() {
     if (!selectedSession) return;
     try {
@@ -569,6 +606,26 @@ export default function App() {
       );
     } catch (e: any) {
       alert(`Arcane purge bottleneck: ${e.message}`);
+    }
+  }
+
+  async function handleSaveSummary(updatedSummaryText: string) {
+    if (!selectedSession) return;
+    try {
+      const updated: Session = {
+        ...selectedSession,
+        summary: updatedSummaryText,
+        updatedAt: new Date().toISOString(),
+      };
+
+      await updateExistingSession(updated);
+      setSelectedSession(updated);
+      
+      setSessions((prev) =>
+        prev.map((s) => (s.id === selectedSession.id ? updated : s))
+      );
+    } catch (e: any) {
+      alert(`Arcane update bottleneck: ${e.message}`);
     }
   }
 
@@ -1177,6 +1234,35 @@ export default function App() {
         {/* Right column main detail panels scroll container */}
         <main className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
           
+          {/* DM Campaign Archives Open Search Query Console */}
+          {selectedCampaignId && (() => {
+            const activeCamp = campaigns.find((c) => c.id === selectedCampaignId);
+            if (!activeCamp) return null;
+            const activeCampSessions = sessions.filter((s) => s.campaignId === selectedCampaignId);
+            return (
+              <CampaignSearchConsole
+                campaignName={activeCamp.name}
+                campaignSetting={activeCamp.setting}
+                campaignDescription={activeCamp.description}
+                sessions={activeCampSessions}
+                campaignHeroes={activeCamp.heroes}
+                onEstablishCanon={handleAppendCanonicalDecree}
+                onSelectSession={(sessionId) => {
+                  const match = sessions.find((s) => s.id === sessionId);
+                  if (match) {
+                    setSelectedSession(match);
+                    setSessionTitle(match.title);
+                    setSessionDate(match.date);
+                    setNotes(match.notes);
+                    setPlayerNotes(match.playerNotes || "");
+                    setAudioTranscription(match.audioTranscription || "");
+                    setActiveWorkspaceTab("chapters");
+                  }
+                }}
+              />
+            );
+          })()}
+
           {/* Active Campaign Workspace Tabs Toggle Row */}
           {selectedCampaignId && (
             <div className="flex border-b border-zinc-850 gap-1.5" id="campaign-workspace-tabstrip">
@@ -1469,71 +1555,17 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* AI Summary Display Container - Parchment paper styling */}
-                <div className="p-6 md:p-8 bg-zinc-900 border border-zinc-800 rounded-lg parchment-glow relative" id="summary-section">
-                  <div className="absolute top-0 left-0 w-2 h-20 bg-red-500/20" />
-                  <div className="absolute top-0 left-0 w-20 h-2 bg-red-500/20" />
-                  
-                  <div className="flex justify-between items-center border-b border-zinc-800 pb-4 mb-4 gap-4 flex-wrap">
-                    <div className="flex items-center gap-2">
-                      <Scroll className="w-6 h-6 text-red-500 animate-pulse" />
-                      <h3 className="font-fantasy font-bold text-base md:text-lg tracking-wider text-zinc-100 uppercase">
-                        📜 CHRONICLE SUMMARY & SPELLBOOK NOTES
-                      </h3>
-                    </div>
-                    
-                    <div className="flex items-center gap-2 shrink-0">
-                      {summarizing && (
-                        <span className="text-xs text-red-500 flex items-center gap-1.5 font-sans italic animate-pulse">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Scribing timeline...
-                        </span>
-                      )}
-                      
-                      {selectedSession.summary && !summarizing && (
-                        <>
-                          {isResetConfirmOpen ? (
-                            <div className="flex items-center gap-1.5 bg-red-950/20 border border-red-900/30 rounded-lg p-1 animate-pulse" id="reset-confirm-box">
-                              <span className="text-[10px] font-mono text-red-400 font-semibold px-2 uppercase tracking-wide">
-                                Destroy Chronicle?
-                              </span>
-                              <button
-                                onClick={() => {
-                                  handleResetSummary();
-                                  setIsResetConfirmOpen(false);
-                                }}
-                                className="px-2 py-1 bg-red-600 hover:bg-red-500 text-zinc-950 text-[10px] font-bold font-mono uppercase rounded transition cursor-pointer"
-                                id="btn-confirm-reset-summary"
-                              >
-                                Yes
-                              </button>
-                              <button
-                                onClick={() => setIsResetConfirmOpen(false)}
-                                className="px-2 py-1 bg-zinc-800 hover:bg-zinc-750 text-zinc-300 text-[10px] font-bold font-mono uppercase rounded transition cursor-pointer"
-                                id="btn-cancel-reset-summary"
-                              >
-                                No
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => setIsResetConfirmOpen(true)}
-                              className="px-2.5 py-1.5 bg-zinc-950/60 hover:bg-red-950/30 text-zinc-400 hover:text-red-400 border border-zinc-850 hover:border-red-900/40 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
-                              title="Delete and reset the compiled summary"
-                              id="btn-trigger-reset-summary"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>Reset Summary</span>
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="bg-zinc-950/40 p-5 rounded border border-zinc-850">
-                    <MarkdownRenderer content={selectedSession.summary || ""} />
-                  </div>
-                </div>
+                {/* AI Summary Display Container - Parchment paper styling with full editing capabilities */}
+                <ChronicleSummarySection
+                  summary={selectedSession.summary || ""}
+                  summarizing={summarizing}
+                  isResetConfirmOpen={isResetConfirmOpen}
+                  setIsResetConfirmOpen={setIsResetConfirmOpen}
+                  onGenerateSummary={generateAISummary}
+                  onResetSummary={handleResetSummary}
+                  onSaveSummary={handleSaveSummary}
+                  onEstablishCanon={(decreeText) => handleAppendCanonicalDecree(selectedSession.id, decreeText)}
+                />
 
                 {/* Automation Wizard: Auto-Forge 3 Images and 1 Video from the summary */}
                 <MediaForgeWizard
@@ -1552,6 +1584,12 @@ export default function App() {
                   {/* Highlights section */}
                   <HighlightSection
                     highlights={selectedSession.highlights || []}
+                    sessionSummary={selectedSession.summary || ""}
+                    characters={selectedSession.characters || []}
+                    campaignHeroes={campaigns.find((c) => c.id === selectedCampaignId)?.heroes || []}
+                    previousHighlights={sessions
+                      .filter((s) => s.campaignId === selectedCampaignId && s.id !== selectedSession.id)
+                      .flatMap((s) => s.highlights || [])}
                     onChange={(updated) => {
                       const updatedSession = { ...selectedSession, highlights: updated };
                       updateExistingSession(updatedSession).then(() => {
@@ -1578,6 +1616,7 @@ export default function App() {
                 <CharacterTracker
                   characters={selectedSession.characters || []}
                   session={selectedSession}
+                  campaignSessions={sessions.filter((s) => s.campaignId === selectedCampaignId)}
                   campaignHeroes={campaigns.find((c) => c.id === selectedCampaignId)?.heroes || []}
                   onUpdateCampaignHeroes={async (updatedHeroes) => {
                     const currentCampaign = campaigns.find((c) => c.id === selectedCampaignId);

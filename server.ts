@@ -13,23 +13,32 @@ const PORT = 3000;
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-// Initialize Google GenAI on the server
-// Utilizes process.env.GEMINI_API_KEY which is automatically injected by AI Studio
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      "User-Agent": "aistudio-build",
-    },
-  },
-});
+// Lazy initialization of Google GenAI client to prevent startup crash if key is missing
+let aiClient: GoogleGenAI | null = null;
+function getAi(): GoogleGenAI {
+  if (!aiClient) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY environment variable is required.");
+    }
+    aiClient = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+  }
+  return aiClient;
+}
 
 // Helper to perform content generation with retry logic (e.g. exponential backoff for 503/429 errors)
-async function generateContentWithRetry(params: { model: string; contents: any; config?: any }, retries = 4, delayMs = 1500): Promise<any> {
+async function generateContentWithRetry(params: { model: string; contents: any; config?: any }, retries = 3, delayMs = 1000): Promise<any> {
   let currentModel = params.model;
   for (let attempt = 1; attempt <= retries + 1; attempt++) {
     try {
-      return await ai.models.generateContent({
+      return await getAi().models.generateContent({
         ...params,
         model: currentModel,
       });
@@ -46,25 +55,105 @@ async function generateContentWithRetry(params: { model: string; contents: any; 
                           error.status === 429;
       
       if (isTransient && attempt <= retries) {
-        // As a high-durability behavior: if we fail on attempt 2 with gemini-3.5-flash,
-        // we dynamically fallback to the lighter gemini-3.1-flash-lite, and if that still fails,
-        // we fallback to the highly available gemini-flash-latest to clear traffic spikes.
-        if (currentModel === "gemini-3.5-flash" && attempt === 2) {
-          console.warn(`[GEMINI API] Attempt ${attempt} failed for primary model gemini-3.5-flash. Dynamically failing back to gemini-3.1-flash-lite to clear traffic spikes...`);
-          currentModel = "gemini-3.1-flash-lite";
-        } else if ((currentModel === "gemini-3.5-flash" || currentModel === "gemini-3.1-flash-lite") && attempt >= 3) {
-          console.warn(`[GEMINI API] Attempt ${attempt} failed. Dynamically failing back to gemini-flash-latest as a tertiary highly-stable fallback model...`);
-          currentModel = "gemini-flash-latest";
+        if ((currentModel === "gemini-3.6-flash" || currentModel === "gemini-3.5-flash") && attempt === 2) {
+          currentModel = "gemini-2.5-flash";
+        } else if (attempt >= 3) {
+          currentModel = "gemini-1.5-flash";
         }
         
-        console.warn(`[GEMINI API] Transient issue on attempt ${attempt} (${error.message || error}). Retrying in ${delayMs}ms using model: ${currentModel}...`);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
-        delayMs *= 2.0; // exponential backoff
+        delayMs *= 1.5;
         continue;
       }
       throw error;
     }
   }
+}
+
+// Durable Image Generation helper with model fallback & Pollinations AI fallback & SVG placeholder fallback
+async function generateImageWithFallback(promptString: string, aspectRatio = "1:1"): Promise<string> {
+  const fullPrompt = `Fantasy RPG hand-drawn illustration style, dungeons and dragons concept art, highly detailed, atmospheric, rich vivid colors: ${promptString}`;
+
+  // Attempt 1: Pollinations AI - fast, reliable AI image generation service returning unique RPG artwork
+  try {
+    const seed = Math.floor(Math.random() * 1000000);
+    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(fullPrompt)}?width=1024&height=1024&seed=${seed}&nologo=true&enhance=true`;
+    const response = await fetch(pollinationsUrl);
+    if (response.ok) {
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength > 1000) {
+        const base64 = Buffer.from(buffer).toString("base64");
+        const contentType = response.headers.get("content-type") || "image/jpeg";
+        return `data:${contentType};base64,${base64}`;
+      }
+    }
+  } catch (_err) {
+    // Silent catch, try next provider
+  }
+
+  // Attempt 2: Try imagen-3.0-generate-002
+  try {
+    const ai = getAi();
+    const imgRes = await ai.models.generateImages({
+      model: "imagen-3.0-generate-002",
+      prompt: fullPrompt,
+      config: {
+        numberOfImages: 1,
+        outputMimeType: "image/png",
+        aspectRatio: aspectRatio as any,
+      },
+    });
+    if (imgRes.generatedImages?.[0]?.image?.imageBytes) {
+      return `data:image/png;base64,${imgRes.generatedImages[0].image.imageBytes}`;
+    }
+  } catch (_err) {
+    // Silent fallback
+  }
+
+  // Attempt 3: Try gemini-2.5-flash-image
+  try {
+    const ai = getAi();
+    const contentRes = await ai.models.generateContent({
+      model: "gemini-2.5-flash-image",
+      contents: [{ text: fullPrompt }],
+      config: {
+        imageConfig: { aspectRatio },
+      },
+    });
+    if (contentRes.candidates?.[0]?.content?.parts) {
+      for (const part of contentRes.candidates[0].content.parts) {
+        if (part.inlineData?.data) {
+          return `data:image/png;base64,${part.inlineData.data}`;
+        }
+      }
+    }
+  } catch (_err) {
+    // Silent fallback
+  }
+
+  // Fallback 4: Dynamic atmospheric SVG card image with scene text
+  const escaped = promptString.substring(0, 110).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+    <defs>
+      <linearGradient id="bgG" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#18181b"/>
+        <stop offset="50%" stop-color="#09090b"/>
+        <stop offset="100%" stop-color="#27272a"/>
+      </linearGradient>
+      <linearGradient id="goldG" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#f59e0b"/>
+        <stop offset="100%" stop-color="#d97706"/>
+      </linearGradient>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#bgG)"/>
+    <rect x="16" y="16" width="480" height="480" fill="none" stroke="#3f3f46" stroke-width="2" rx="12"/>
+    <path d="M256 90 L380 280 L132 280 Z" fill="#18181b" stroke="#f59e0b" stroke-width="2" opacity="0.6"/>
+    <circle cx="256" cy="190" r="36" fill="#f59e0b" opacity="0.15"/>
+    <circle cx="256" cy="190" r="12" fill="#f59e0b"/>
+    <text x="256" y="360" font-family="Cinzel, Georgia, serif" font-size="18" fill="url(#goldG)" text-anchor="middle" font-weight="bold" letter-spacing="1">D&amp;D CHRONICLE ILLUSTRATION</text>
+    <text x="256" y="395" font-family="sans-serif" font-size="12" fill="#a1a1aa" text-anchor="middle">${escaped}</text>
+  </svg>`;
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
 // Safely extracts a clean JSON block from raw model response text, searching for outermost curly braces
@@ -107,9 +196,9 @@ app.post("/api/transcribe-audio", async (req, res) => {
       text: "You are an expert RPG Dungeon Master scribe. Play close attention to the following recorded audio snippet from a TTRPG game session. Please write a highly detailed transcription and chronicle what happened. Include key dialog, narrative descriptions, names of characters or locations mentioned, dice rolls, battle events, and any key gameplay discussions.",
     };
 
-    // Use gold standards: gemini-3.5-flash for basic text and audio transcription
+    // Use gold standards: gemini-3.6-flash for basic text and audio transcription
     const response = await generateContentWithRetry({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: { parts: [audioPart, promptPart] },
     });
 
@@ -123,9 +212,9 @@ app.post("/api/transcribe-audio", async (req, res) => {
 // 2. Automated AI Session Summarizer
 app.post("/api/generate-summary", async (req, res) => {
   try {
-    const { title, date, notes, audioTranscription } = req.body;
-    if (!notes && !audioTranscription) {
-      res.status(400).json({ error: "Please provide either notes or an audio transcription to summarize." });
+    const { title, date, notes, playerNotes, audioTranscription } = req.body;
+    if (!notes && !playerNotes && !audioTranscription) {
+      res.status(400).json({ error: "Please provide notes, player notes, or an audio transcription to summarize." });
       return;
     }
 
@@ -133,17 +222,34 @@ app.post("/api/generate-summary", async (req, res) => {
 Campaign Session: ${title || "Untitled Session"}
 Session Date: ${date || "N/A"}
 
---- WRITTEN NOTES ---
-${notes || "No independent written notes provided."}
+--- DM SCRIBE NOTES (OFFICIAL DM LOGS) ---
+${notes || "No DM scribe notes provided."}
+
+--- PLAYER JOURNAL NOTES (PLAYER STASH / DIARY) ---
+${playerNotes || "No player journal notes provided."}
 
 --- AUDIO TRANSCRIPTION/LOGS ---
 ${audioTranscription || "No audio transcription provided."}
 `;
 
     const prompt = `
-You are a highly acclaimed, creative Dungeon Master Companion. Analyze the following campaign logs, session notes, and audio transcriptions, then synthesize them into a magnificent, organized, and deeply practical Session Chronicle.
+You are a highly acclaimed, creative Dungeon Master Companion. Analyze the following campaign logs, session notes, player journals, and audio transcriptions, then synthesize them into a magnificent, organized, and deeply practical Session Chronicle.
 
-Compile your response utilizing beautiful clean Markdown formatting with the following exact structural sections:
+CRITICAL RULE FOR CANON CONFLICTS / DISCREPANCIES:
+1. Carefully compare [DM SCRIBE NOTES] against [PLAYER JOURNAL NOTES].
+2. Trust [DM SCRIBE NOTES] over [PLAYER JOURNAL NOTES] by default for all summaries and facts.
+3. If you detect ANY conflicting or differing details between DM Scribe Notes and Player Journal Notes (e.g. conflicting loot/gold amounts, magic item details, NPC fates/outcomes, battle casualties, or quest decisions):
+   - You MUST add a prominent first section at the very top of your summary:
+
+# ⚖️ CANON CONFLICTS & DISCREPANCIES DETECTED
+- For each conflict found, clearly specify:
+  * **Conflict Topic**: (e.g. "Gold Bounty Amount" or "Fate of Goblin Chief")
+  * **DM Scribe Log Record**: (What the DM notes say)
+  * **Player Journal Record**: (What the Player notes say)
+  * **Default Assumption**: "Defaulting to DM Scribe Log."
+  * **DM Decision Prompt**: Ask the Dungeon Master explicitly: *"Which version should be established as canonical going forward? Click 'Establish Canonical Truth' below to append your ruling permanently to this session."*
+
+Compile the rest of your response utilizing beautiful clean Markdown formatting with the following exact structural sections:
 
 # 📜 SESSION TITLE & CHRONICLE OVERVIEW
 *Create an immersive, themed, evocative title for this chapter of the chronicle, followed by a theatrical 2-3 paragraph atmospheric overview of the session's overall progress and major themes.*
@@ -162,7 +268,7 @@ Compile your response utilizing beautiful clean Markdown formatting with the fol
 `;
 
     const response = await generateContentWithRetry({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: [
         { text: campaignContext },
         { text: prompt }
@@ -205,7 +311,7 @@ Do not include any wordy explanations or markdown backticks around the JSON. Ret
 `;
 
     const response = await generateContentWithRetry({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: [
         { text: summary },
         { text: extractionPrompt }
@@ -233,42 +339,89 @@ app.post("/api/generate-highlight", async (req, res) => {
       return;
     }
 
-    // Use gold standards: gemini-2.5-flash-image for general image tasks
-    const response = await generateContentWithRetry({
-      model: "gemini-2.5-flash-image",
-      contents: {
-        parts: [
-          {
-            text: `Fantasy RPG hand-drawn illustration style, dungeons and dragons character/item/event concept art. Highly detailed, rich colors, atmospheric: ${promptString}`,
-          },
-        ],
-      },
-      config: {
-        imageConfig: {
-          aspectRatio: "1:1",
-        },
-      },
-    });
-
-    let base64Image = "";
-    if (response.candidates?.[0]?.content?.parts) {
-      for (const part of response.candidates[0].content.parts) {
-        if (part.inlineData) {
-          base64Image = part.inlineData.data;
-          break;
-        }
-      }
-    }
-
-    if (!base64Image) {
-      throw new Error("No image data returned from image generation model.");
-    }
-
-    const imageUrl = `data:image/png;base64,${base64Image}`;
+    const imageUrl = await generateImageWithFallback(promptString, "1:1");
     res.json({ imageUrl });
   } catch (error: any) {
     console.error("Image generation error:", error);
     res.status(400).json({ error: error.message || "Failed to generate highlight image." });
+  }
+});
+
+// 3.5. Highlight Generation with Character & Scene Continuity from Session to Session
+app.post("/api/generate-continuity-illustration", async (req, res) => {
+  try {
+    const { summary, characters, campaignHeroes, previousHighlights } = req.body;
+    if (!summary) {
+      res.status(400).json({ error: "Missing campaign summary for illustration design." });
+      return;
+    }
+
+    // Format all character descriptions (both party heroes and session NPCs/monsters)
+    const allChars = [
+      ...(Array.isArray(campaignHeroes) ? campaignHeroes : []),
+      ...(Array.isArray(characters) ? characters : [])
+    ];
+
+    const charsText = allChars.length > 0
+      ? allChars.map((c: any) => `- Name: ${c.name}, Class/Role: ${c.classType || c.role || "Hero/NPC"}, Race: ${c.race || "N/A"}, Appearance/Equipment/Details: ${c.description || c.notes || c.details || "N/A"}`).join("\n")
+      : "No specific character details provided.";
+
+    const prevHighlightsText = previousHighlights && Array.isArray(previousHighlights) && previousHighlights.length > 0
+      ? previousHighlights.map((h: any, idx: number) => `- Previous Session Illustration ${idx + 1}: Caption: "${h.caption || "Untitled"}"${h.optimizedPrompt ? ` | Visual Prompt Used Previously: "${h.optimizedPrompt}"` : ""}`).join("\n")
+      : "No previous illustration details.";
+
+    const designPrompt = `
+You are an expert RPG Visual Director and Concept Artist for D&D 5e campaigns.
+We need to generate an accurate, unique, high-quality, continuity-aware visual scene for a campaign session based on its chronicle summary.
+
+INPUT DATA:
+1. SESSION CHRONICLE SUMMARY:
+"${summary}"
+
+2. ACTIVE HERO PARTY & CHARACTERS (Maintain these exact physical appearances, hair, armor, skin, weapons, and features across all session art):
+${charsText}
+
+3. PREVIOUS SESSION ARTWORK & VISUAL STYLE HISTORY (Reference these to maintain visual style and character continuity from session to session):
+${prevHighlightsText}
+
+YOUR TASK:
+1. Carefully dissect the Session Chronicle Summary and choose ONE iconic, highly visual, dramatic moment (e.g., a fiery battle with a creature, finding a glowing relic in ancient ruins, a tense confrontation with an NPC, or a heroic party standoff).
+2. Create a hyper-specific, highly detailed 1-paragraph visual prompt for an AI image generator.
+3. CRITICAL CONTINUITY MANDATE:
+   - If any character from the 'Active Hero Party & Characters' list is involved in the chosen scene, you MUST describe their physical traits (hair color/style, armor/clothes, held weapons, race, facial structure) EXACTLY as defined so their portrait remains consistent across sessions.
+   - Describe the exact environment (cavern, tavern, castle, swamp, ruins), lighting (torchlight, moonlight, spell glow), mood, composition (cinematic wide-angle, dramatic low-angle), and color palette.
+   - The art style MUST be: "High fantasy RPG hand-drawn illustration style, dungeons and dragons character concept art, rich vivid colors, atmospheric lighting, epic digital painting, highly detailed."
+4. Provide a succinct 1-sentence caption describing the exact event portrayed in the art.
+
+Respond with valid JSON:
+{
+  "optimizedPrompt": "Your detailed, continuity-aware visual prompt...",
+  "chosenSceneCaption": "A concise 1-sentence caption for the generated artwork"
+}
+Do not include markdown backticks outside the JSON. Return raw JSON only.
+`;
+
+    // Step 1: Optimize prompt using gemini-3.6-flash
+    const gResponse = await generateContentWithRetry({
+      model: "gemini-3.6-flash",
+      contents: [{ text: designPrompt }],
+      config: {
+        responseMimeType: "application/json",
+      },
+    });
+
+    const cleanText = extractJsonText(gResponse.text || "{}");
+    const parsed = JSON.parse(cleanText);
+
+    const finalImagePrompt = parsed.optimizedPrompt || `Fantasy RPG hand-drawn illustration of: ${summary.substring(0, 100)}`;
+    const chosenCaption = parsed.chosenSceneCaption || "An epic chronicle moment unfolds.";
+
+    // Step 2: Generate Image with Fallback
+    const imageUrl = await generateImageWithFallback(finalImagePrompt, "1:1");
+    res.json({ imageUrl, caption: chosenCaption, optimizedPrompt: finalImagePrompt });
+  } catch (error: any) {
+    console.error("Continuity illustration generation error:", error);
+    res.status(400).json({ error: error.message || "Failed to generate continuity-aware illustration." });
   }
 });
 
@@ -299,7 +452,7 @@ app.post("/api/generate-video", async (req, res) => {
       };
     }
 
-    const operation = await ai.models.generateVideos(videoConfig);
+    const operation = await getAi().models.generateVideos(videoConfig);
     res.json({ operationName: operation.name });
   } catch (error: any) {
     console.error("Video generation start fail:", error);
@@ -318,7 +471,7 @@ app.post("/api/video-status", async (req, res) => {
 
     const op = new GenerateVideosOperation();
     op.name = operationName;
-    const updated = await ai.operations.getVideosOperation({ operation: op });
+    const updated = await getAi().operations.getVideosOperation({ operation: op });
 
     res.json({
       done: updated.done || false,
@@ -341,7 +494,7 @@ app.post("/api/video-download", async (req, res) => {
 
     const op = new GenerateVideosOperation();
     op.name = operationName;
-    const updated = await ai.operations.getVideosOperation({ operation: op });
+    const updated = await getAi().operations.getVideosOperation({ operation: op });
 
     const uri = updated.response?.generatedVideos?.[0]?.video?.uri;
     if (!uri) {
@@ -386,7 +539,7 @@ app.post("/api/video-download", async (req, res) => {
 // 5. Automated NPC Detection from Chronicle / Transcription
 app.post("/api/detect-npcs", async (req, res) => {
   try {
-    const { summary, notes, audioTranscription, existingHeroes } = req.body;
+    const { summary, notes, audioTranscription, existingHeroes, previousChapterNPCs } = req.body;
     if (!summary && !notes && !audioTranscription) {
       res.status(400).json({ error: "No campaign text, summaries, or transcriptions provided to analyze NPC souls." });
       return;
@@ -406,6 +559,11 @@ ${audioTranscription || "N/A"}
 ${existingHeroes && existingHeroes.length > 0 
   ? existingHeroes.map((h: any) => `- Name: ${h.name}, Level: ${h.level}, Magic Items: [${(h.magicItems || []).join(", ")}]`).join("\n")
   : "None recorded yet."}
+
+--- PREVIOUSLY ENCOUNTERED CAMPAIGN NPCs (CRITICAL: If any detected NPC matches a name here, reuse their exact statblock, skills, and identity) ---
+${previousChapterNPCs && previousChapterNPCs.length > 0
+  ? previousChapterNPCs.map((n: any) => `- Name: "${n.name}", Role: "${n.role}", HP: ${n.hp}, AC: ${n.ac}, Skills/Actions: "${n.skills_or_actions || 'N/A'}", Previously in Chapters: [${(n.previousChapters || []).map((c: any) => c.title).join(", ")}]`).join("\n")
+  : "No prior campaign NPCs recorded."}
 `;
 
     const prompt = `
@@ -497,7 +655,7 @@ Ensure all fields are present and valid. Do not include wordy explanations or ma
 `;
 
     const response = await generateContentWithRetry({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: [
         { text: docContext },
         { text: prompt }
@@ -513,6 +671,166 @@ Ensure all fields are present and valid. Do not include wordy explanations or ma
   } catch (error: any) {
     console.error("Character detection error:", error);
     res.status(400).json({ error: error.message || "Failed to detect characters." });
+  }
+});
+
+// 6. DM Open Campaign Archive Search & Knowledge Oracle
+app.post("/api/query-campaign", async (req, res) => {
+  try {
+    const { query, campaignName, campaignSetting, campaignDescription, campaignHeroes, sessions } = req.body;
+
+    if (!query || typeof query !== "string" || !query.trim()) {
+      res.status(400).json({ error: "A non-empty search query or question is required." });
+      return;
+    }
+
+    const trimmedQuery = query.trim();
+
+    // Compile comprehensive context across entire campaign chronicle archive
+    let contextText = `=== CAMPAIGN WORLD OVERVIEW ===\n`;
+    contextText += `Title: ${campaignName || "Untitled Campaign"}\n`;
+    contextText += `Setting: ${campaignSetting || "D&D 5e"}\n`;
+    contextText += `Description: ${campaignDescription || "N/A"}\n\n`;
+
+    contextText += `=== REGISTERED PLAYER HEROES (PCs) ===\n`;
+    if (campaignHeroes && campaignHeroes.length > 0) {
+      campaignHeroes.forEach((h: any, idx: number) => {
+        contextText += `${idx + 1}. Name: ${h.name} | Class: ${h.classType || "Hero"} | Level: ${h.level || 1} | Race: ${h.race || "N/A"} | Alignment: ${h.alignment || "N/A"} | Status: ${h.activeStatus || "Healthy"}\n`;
+        if (h.magicItems && h.magicItems.length > 0) {
+          contextText += `   Magic Items / Relics: ${h.magicItems.join(", ")}\n`;
+        }
+        if (h.history && h.history.length > 0) {
+          contextText += `   Progression Milestones: ${h.history.map((mil: any) => `${mil.value} (${mil.date}): ${mil.notes}`).join(" | ")}\n`;
+        }
+        if (h.notes) {
+          contextText += `   Lore / Player Notes: ${h.notes}\n`;
+        }
+      });
+    } else {
+      contextText += `No player characters currently registered.\n`;
+    }
+    contextText += `\n`;
+
+    contextText += `=== ALL CHRONICLE CHAPTERS & SESSION NOTES (${sessions?.length || 0} Total Sessions) ===\n`;
+    if (sessions && sessions.length > 0) {
+      sessions.forEach((s: any, idx: number) => {
+        contextText += `--- CHAPTER ${idx + 1}: "${s.title || 'Untitled Session'}" (Session ID: ${s.id}, Date: ${s.date || 'Unknown'}) ---\n`;
+        if (s.summary) {
+          contextText += `[AI Synthesized Summary]:\n${s.summary}\n`;
+        }
+        if (s.notes) {
+          contextText += `[DM Scribe Notes]:\n${s.notes}\n`;
+        }
+        if (s.playerNotes) {
+          contextText += `[Player Journal / Stash Notes]:\n${s.playerNotes}\n`;
+        }
+        if (s.audioTranscription) {
+          contextText += `[Audio Transcription / Live Highlights]:\n${s.audioTranscription}\n`;
+        }
+        if (s.characters && s.characters.length > 0) {
+          contextText += `[NPCs Encountered / Logged in Chapter]:\n`;
+          s.characters.forEach((npc: any) => {
+            contextText += `  * Name: "${npc.name}" | Role: "${npc.role}" | Description: "${npc.description || "N/A"}" | HP: ${npc.hp ?? "?"} | AC: ${npc.ac ?? "?"} | Alignment: "${npc.alignment || "N/A"}" | Skills/Actions: "${npc.skills_or_actions || "N/A"}"\n`;
+          });
+        }
+        contextText += `\n`;
+      });
+    } else {
+      contextText += `No session records found in the campaign archives.\n`;
+    }
+
+    const prompt = `
+You are the Master Dungeon Scribe and DM Campaign Knowledge Oracle. Your task is to answer the Dungeon Master's question or search query by analyzing all session notes, session summaries, player notes, audio transcriptions, PC hero rosters, and NPC records in the campaign archive provided below.
+
+CRITICAL DISCREPANCY & CANON RULE (DM LOGS VS PLAYER JOURNAL):
+1. Carefully compare [DM Scribe Notes] against [Player Journal Notes] across the session chapters.
+2. Trust [DM Scribe Notes] over [Player Journal Notes] by default when answering questions.
+3. IF the user's query relates to information where [DM Scribe Notes] and [Player Journal Notes] contain conflicting or differing details (e.g. gold rewards, enemy fates, magic item owners, NPC names/outcomes, or quest goals):
+   - You MUST include a prominent callout block in your response:
+
+### ⚖️ CANON CONFLICT DETECTED
+- **Conflict Area**: (Describe the topic)
+- **DM Scribe Log Record**: (What the DM notes say)
+- **Player Journal Record**: (What the Player notes say)
+- **Default Answer**: (Provide answer based on DM Scribe Log)
+- **DM Confirmation Prompt**: Ask the Dungeon Master explicitly: *"Does the DM Scribe Log reflect canonical truth, or should the Player Journal version be adopted? Click 'Establish Canonical Truth' below to choose which version to save as official canon going forward."*
+
+GENERAL INSTRUCTIONS:
+1. Provide a direct, comprehensive, and clear answer to the Dungeon Master's question.
+2. Explicitly cite which Chapter titles (e.g. "Chapter 1: The Goblin Ambush") and which PCs or NPCs contain the relevant details.
+3. Use markdown formatting with clear headings, bold text, and bullet points.
+4. If a detail is missing or not mentioned anywhere in the archives, state that explicitly and offer a brief, logical DM suggestion or inference based on what is known.
+
+CAMPAIGN ARCHIVE DATA:
+${contextText}
+
+DUNGEON MASTER'S QUERY:
+"${trimmedQuery}"
+`;
+
+    const response = await generateContentWithRetry({
+      model: "gemini-3.6-flash",
+      contents: prompt,
+      config: {
+        systemInstruction: "You are an expert D&D 5e Dungeon Master assistant specializing in instant campaign chronicle search and lore cross-referencing.",
+        temperature: 0.3,
+      },
+    });
+
+    const answerText = response.text || "No details could be extracted from the campaign archives for this query.";
+
+    // Compute matching session IDs and character names for quick interactive badges
+    const lowerQuery = trimmedQuery.toLowerCase();
+    const keywords = lowerQuery.split(/\s+/).filter((k) => k.length >= 3);
+
+    const matchingSessions: Array<{ id: string; title: string; date: string }> = [];
+    const matchingCharacters: Array<{ name: string; role?: string }> = [];
+
+    if (sessions && sessions.length > 0) {
+      sessions.forEach((s: any) => {
+        const textToSearch = `${s.title || ''} ${s.summary || ''} ${s.notes || ''} ${s.playerNotes || ''} ${s.audioTranscription || ''}`.toLowerCase();
+        if (keywords.some((kw) => textToSearch.includes(kw))) {
+          matchingSessions.push({
+            id: s.id,
+            title: s.title || "Untitled Chapter",
+            date: s.date || "",
+          });
+        }
+      });
+    }
+
+    if (campaignHeroes) {
+      campaignHeroes.forEach((h: any) => {
+        const textToSearch = `${h.name} ${h.classType || ''} ${(h.magicItems || []).join(' ')} ${h.notes || ''}`.toLowerCase();
+        if (keywords.some((kw) => textToSearch.includes(kw))) {
+          matchingCharacters.push({ name: h.name, role: `PC (${h.classType || 'Hero'})` });
+        }
+      });
+    }
+
+    if (sessions) {
+      const seenNpcNames = new Set(matchingCharacters.map((c) => c.name.toLowerCase()));
+      sessions.forEach((s: any) => {
+        (s.characters || []).forEach((c: any) => {
+          const norm = c.name.toLowerCase();
+          const textToSearch = `${c.name} ${c.role || ''} ${c.description || ''} ${c.skills_or_actions || ''}`.toLowerCase();
+          if (keywords.some((kw) => textToSearch.includes(kw)) && !seenNpcNames.has(norm)) {
+            seenNpcNames.add(norm);
+            matchingCharacters.push({ name: c.name, role: c.role || "NPC" });
+          }
+        });
+      });
+    }
+
+    res.json({
+      answer: answerText,
+      query: trimmedQuery,
+      matchingSessions,
+      matchingCharacters,
+    });
+  } catch (error: any) {
+    console.error("Campaign search query error:", error);
+    res.status(500).json({ error: error.message || "Failed to process campaign query." });
   }
 });
 
@@ -688,7 +1006,7 @@ Only return clean, valid, raw JSON. Do not include wordy descriptions, markdown 
 
     console.log("[DNDBeyond Linker] Sending cleaned HTML to Gemini for robust analytics...");
     const gResponse = await generateContentWithRetry({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: [
         { text: `CONTEXT SOURCE HTML:\n${cleanedData}` },
         { text: prompt }
@@ -938,7 +1256,7 @@ Only return clean, valid, raw JSON. Do not include wordy descriptions, markdown 
       } catch (e: any) {
         console.warn("[DNDBeyond Character Linker] Native parsing failed, falling back to Gemini...", e);
         const gResponse = await generateContentWithRetry({
-          model: "gemini-3.5-flash",
+          model: "gemini-3.6-flash",
           contents: [
             { text: `RAW OFFICIAL CHARACTER JSON:\n${JSON.stringify(directJsonData)}` },
             { text: prompt }
@@ -1014,7 +1332,7 @@ Only return clean, valid, raw JSON. Do not include wordy descriptions, markdown 
 
     console.log("[DNDBeyond Character Linker] Sending cleaned HTML/Extracted elements to Gemini for robust parsing...");
     const gResponse = await generateContentWithRetry({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: [
         { text: `CONTEXT SOURCE DATA:\n${cleanedData}` },
         { text: prompt }
@@ -1108,16 +1426,33 @@ function parseDndBeyondJson(json: any, sourceType: "auto" | "pasted_json"): any 
   const conScore = stats.constitution.total;
   const conMod = Math.floor((conScore - 10) / 2);
 
-  // 5. HP
+  // 5. HP & Hit Point Modifiers
   const baseHp = data.baseHitPoints || 0;
   const bonusHp = data.bonusHitPoints || 0;
   const overrideHp = data.overrideHitPoints || 0;
   const removedHp = data.removedHitPoints || 0;
   const tempHp = data.temporaryHitPoints || 0;
 
+  let hpPerLevelBonus = 0;
+  let flatHpBonus = 0;
+
+  if (data.modifiers) {
+    for (const group in data.modifiers) {
+      if (Array.isArray(data.modifiers[group])) {
+        data.modifiers[group].forEach((mod: any) => {
+          if (mod.subType === "hit-points-per-level") {
+            hpPerLevelBonus += (mod.value || mod.fixedValue || 0) * level;
+          } else if ((mod.subType === "hit-points" || mod.subType === "bonus-hit-points") && !mod.dice && mod.value !== null) {
+            flatHpBonus += (mod.value || mod.fixedValue || 0);
+          }
+        });
+      }
+    }
+  }
+
   let maxHp = overrideHp;
   if (!maxHp) {
-    maxHp = baseHp + bonusHp + (conMod * level);
+    maxHp = baseHp + bonusHp + (conMod * level) + hpPerLevelBonus + flatHpBonus;
   }
   const currentHp = Math.max(0, maxHp + tempHp - removedHp);
 
@@ -1631,7 +1966,7 @@ ${text}
 `;
 
     const response = await generateContentWithRetry({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are a professional D&D 5e mechanics parser. Extract data accurately from messy copy-pasted character sheets into the requested structured JSON. Ensure no lists are truncated. Keep item/spell descriptions concise but informative.",
@@ -1657,24 +1992,28 @@ ${text}
 
 // Mount Vite middleware for development or serve builds in production
 async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    // SPA fallback
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
+  try {
+    if (process.env.NODE_ENV !== "production") {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } else {
+      const distPath = path.join(process.cwd(), "dist");
+      app.use(express.static(distPath));
+      // SPA fallback
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Dungeon Master Companion backend online on port: ${PORT}`);
-  });
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Dungeon Master Companion backend online on port: ${PORT}`);
+    });
+  } catch (err) {
+    console.error("Failed to start server:", err);
+  }
 }
 
 startServer();
