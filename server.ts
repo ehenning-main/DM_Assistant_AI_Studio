@@ -34,7 +34,7 @@ function getAi(): GoogleGenAI {
 }
 
 // Helper to perform content generation with retry logic (e.g. exponential backoff for 503/429 errors)
-async function generateContentWithRetry(params: { model: string; contents: any; config?: any }, retries = 4, delayMs = 1500): Promise<any> {
+async function generateContentWithRetry(params: { model: string; contents: any; config?: any }, retries = 3, delayMs = 1000): Promise<any> {
   let currentModel = params.model;
   for (let attempt = 1; attempt <= retries + 1; attempt++) {
     try {
@@ -55,18 +55,14 @@ async function generateContentWithRetry(params: { model: string; contents: any; 
                           error.status === 429;
       
       if (isTransient && attempt <= retries) {
-        // High durability behavior: fallback across flash models
         if ((currentModel === "gemini-3.6-flash" || currentModel === "gemini-3.5-flash") && attempt === 2) {
-          console.warn(`[GEMINI API] Attempt ${attempt} failed for primary model ${currentModel}. Dynamically failing back to gemini-3.1-flash-lite...`);
-          currentModel = "gemini-3.1-flash-lite";
-        } else if ((currentModel === "gemini-3.6-flash" || currentModel === "gemini-3.5-flash" || currentModel === "gemini-3.1-flash-lite") && attempt >= 3) {
-          console.warn(`[GEMINI API] Attempt ${attempt} failed. Dynamically failing back to gemini-flash-latest...`);
-          currentModel = "gemini-flash-latest";
+          currentModel = "gemini-2.5-flash";
+        } else if (attempt >= 3) {
+          currentModel = "gemini-1.5-flash";
         }
         
-        console.warn(`[GEMINI API] Transient issue on attempt ${attempt} (${error.message || error}). Retrying in ${delayMs}ms using model: ${currentModel}...`);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
-        delayMs *= 2.0; // exponential backoff
+        delayMs *= 1.5;
         continue;
       }
       throw error;
@@ -74,11 +70,28 @@ async function generateContentWithRetry(params: { model: string; contents: any; 
   }
 }
 
-// Durable Image Generation helper with model fallback & SVG placeholder fallback
+// Durable Image Generation helper with model fallback & Pollinations AI fallback & SVG placeholder fallback
 async function generateImageWithFallback(promptString: string, aspectRatio = "1:1"): Promise<string> {
-  const fullPrompt = `Fantasy RPG hand-drawn illustration style, dungeons and dragons concept art, highly detailed, atmospheric: ${promptString}`;
+  const fullPrompt = `Fantasy RPG hand-drawn illustration style, dungeons and dragons concept art, highly detailed, atmospheric, rich vivid colors: ${promptString}`;
 
-  // Attempt 1: imagen-3.0-generate-002
+  // Attempt 1: Pollinations AI - fast, reliable AI image generation service returning unique RPG artwork
+  try {
+    const seed = Math.floor(Math.random() * 1000000);
+    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(fullPrompt)}?width=1024&height=1024&seed=${seed}&nologo=true&enhance=true`;
+    const response = await fetch(pollinationsUrl);
+    if (response.ok) {
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength > 1000) {
+        const base64 = Buffer.from(buffer).toString("base64");
+        const contentType = response.headers.get("content-type") || "image/jpeg";
+        return `data:${contentType};base64,${base64}`;
+      }
+    }
+  } catch (_err) {
+    // Silent catch, try next provider
+  }
+
+  // Attempt 2: Try imagen-3.0-generate-002
   try {
     const ai = getAi();
     const imgRes = await ai.models.generateImages({
@@ -93,17 +106,16 @@ async function generateImageWithFallback(promptString: string, aspectRatio = "1:
     if (imgRes.generatedImages?.[0]?.image?.imageBytes) {
       return `data:image/png;base64,${imgRes.generatedImages[0].image.imageBytes}`;
     }
-  } catch (err: any) {
-    console.warn("[GEMINI API] generateImages with imagen-3.0-generate-002 failed/unsupported:", err.message || err);
+  } catch (_err) {
+    // Silent fallback
   }
 
-  // Attempt 2: gemini-3.1-flash-lite-image via generateContent
+  // Attempt 3: Try gemini-2.5-flash-image
   try {
-    const contentRes = await generateContentWithRetry({
-      model: "gemini-3.1-flash-lite-image",
-      contents: {
-        parts: [{ text: fullPrompt }],
-      },
+    const ai = getAi();
+    const contentRes = await ai.models.generateContent({
+      model: "gemini-2.5-flash-image",
+      contents: [{ text: fullPrompt }],
       config: {
         imageConfig: { aspectRatio },
       },
@@ -115,19 +127,31 @@ async function generateImageWithFallback(promptString: string, aspectRatio = "1:
         }
       }
     }
-  } catch (err: any) {
-    console.warn("[GEMINI API] generateContent with gemini-3.1-flash-lite-image failed:", err.message || err);
+  } catch (_err) {
+    // Silent fallback
   }
 
-  // Fallback: Return an atmospheric SVG card image so the client UI remains functional and clean
-  const escaped = promptString.substring(0, 90).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // Fallback 4: Dynamic atmospheric SVG card image with scene text
+  const escaped = promptString.substring(0, 110).replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-    <rect width="100%" height="100%" fill="#09090b"/>
-    <rect x="16" y="16" width="480" height="480" fill="none" stroke="#27272a" stroke-width="2" rx="12"/>
-    <path d="M256 100 L370 280 L140 280 Z" fill="#18181b" stroke="#3f3f46" stroke-width="2"/>
-    <circle cx="370" cy="160" r="28" fill="#ef4444" opacity="0.8"/>
-    <text x="256" y="370" font-family="serif" font-size="20" fill="#f4f4f5" text-anchor="middle" font-weight="bold">D&amp;D CHRONICLE ILLUSTRATION</text>
-    <text x="256" y="405" font-family="sans-serif" font-size="12" fill="#71717a" text-anchor="middle">${escaped}</text>
+    <defs>
+      <linearGradient id="bgG" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#18181b"/>
+        <stop offset="50%" stop-color="#09090b"/>
+        <stop offset="100%" stop-color="#27272a"/>
+      </linearGradient>
+      <linearGradient id="goldG" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#f59e0b"/>
+        <stop offset="100%" stop-color="#d97706"/>
+      </linearGradient>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#bgG)"/>
+    <rect x="16" y="16" width="480" height="480" fill="none" stroke="#3f3f46" stroke-width="2" rx="12"/>
+    <path d="M256 90 L380 280 L132 280 Z" fill="#18181b" stroke="#f59e0b" stroke-width="2" opacity="0.6"/>
+    <circle cx="256" cy="190" r="36" fill="#f59e0b" opacity="0.15"/>
+    <circle cx="256" cy="190" r="12" fill="#f59e0b"/>
+    <text x="256" y="360" font-family="Cinzel, Georgia, serif" font-size="18" fill="url(#goldG)" text-anchor="middle" font-weight="bold" letter-spacing="1">D&amp;D CHRONICLE ILLUSTRATION</text>
+    <text x="256" y="395" font-family="sans-serif" font-size="12" fill="#a1a1aa" text-anchor="middle">${escaped}</text>
   </svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
@@ -326,48 +350,55 @@ app.post("/api/generate-highlight", async (req, res) => {
 // 3.5. Highlight Generation with Character & Scene Continuity from Session to Session
 app.post("/api/generate-continuity-illustration", async (req, res) => {
   try {
-    const { summary, characters, previousHighlights } = req.body;
+    const { summary, characters, campaignHeroes, previousHighlights } = req.body;
     if (!summary) {
       res.status(400).json({ error: "Missing campaign summary for illustration design." });
       return;
     }
 
-    // Format inputs for the prompt
-    const charsText = characters && Array.isArray(characters) && characters.length > 0
-      ? characters.map((c: any) => `- Name: ${c.name}, Class/Role: ${c.classType || c.role || "N/A"}, Race: ${c.race || "N/A"}, Description/Appearance: ${c.description || "N/A"}`).join("\n")
+    // Format all character descriptions (both party heroes and session NPCs/monsters)
+    const allChars = [
+      ...(Array.isArray(campaignHeroes) ? campaignHeroes : []),
+      ...(Array.isArray(characters) ? characters : [])
+    ];
+
+    const charsText = allChars.length > 0
+      ? allChars.map((c: any) => `- Name: ${c.name}, Class/Role: ${c.classType || c.role || "Hero/NPC"}, Race: ${c.race || "N/A"}, Appearance/Equipment/Details: ${c.description || c.notes || c.details || "N/A"}`).join("\n")
       : "No specific character details provided.";
 
     const prevHighlightsText = previousHighlights && Array.isArray(previousHighlights) && previousHighlights.length > 0
-      ? previousHighlights.map((h: any) => `- Previous Illustration: "${h.caption || h.title}"`).join("\n")
+      ? previousHighlights.map((h: any, idx: number) => `- Previous Session Illustration ${idx + 1}: Caption: "${h.caption || "Untitled"}"${h.optimizedPrompt ? ` | Visual Prompt Used Previously: "${h.optimizedPrompt}"` : ""}`).join("\n")
       : "No previous illustration details.";
 
     const designPrompt = `
-You are an expert RPG visual director. We want to generate a new high-quality illustration for a D&D campaign session.
-To ensure character portraits and art style remain continuous and consistent across sessions, you are provided with:
-1. The Current Session Chronicle Summary:
+You are an expert RPG Visual Director and Concept Artist for D&D 5e campaigns.
+We need to generate an accurate, unique, high-quality, continuity-aware visual scene for a campaign session based on its chronicle summary.
+
+INPUT DATA:
+1. SESSION CHRONICLE SUMMARY:
 "${summary}"
 
-2. The Active Campaign Characters & Heroes (with classes, race, and physical details to maintain in character portraits):
+2. ACTIVE HERO PARTY & CHARACTERS (Maintain these exact physical appearances, hair, armor, skin, weapons, and features across all session art):
 ${charsText}
 
-3. Previous Session Illustrations (for scene and visual style continuity):
+3. PREVIOUS SESSION ARTWORK & VISUAL STYLE HISTORY (Reference these to maintain visual style and character continuity from session to session):
 ${prevHighlightsText}
 
-Your task:
-1. Dissect the Chronicle Summary and choose ONE highly dramatic, visual moment (such as a legendary battle, an exploration of glowing ancient ruins, meeting a key NPC, or finding a legendary relic).
-2. Write a highly detailed, 1-paragraph visual prompt for an image generator that portrays this chosen scene.
-3. CRITICAL PORTRAIT CONTINUITY RULES:
-   - If any character from the 'Active Campaign Characters' list is involved in the chosen scene, you MUST describe their appearance and equipment EXACTLY as specified in their details so their face, hair, armor, and traits remain consistent with other sessions' art.
-   - Describe the composition, camera angle (e.g. dramatic low-angle shot, side-profile epic stance, centered), environment (e.g. mossy cavern walls, warm amber torches casting long shadows), and art style.
-   - The style MUST be: "Fantasy RPG hand-drawn illustration style, dungeons and dragons character concept art, highly detailed, rich colors, atmospheric."
-4. Generate an elegant 1-sentence caption for this illustration.
+YOUR TASK:
+1. Carefully dissect the Session Chronicle Summary and choose ONE iconic, highly visual, dramatic moment (e.g., a fiery battle with a creature, finding a glowing relic in ancient ruins, a tense confrontation with an NPC, or a heroic party standoff).
+2. Create a hyper-specific, highly detailed 1-paragraph visual prompt for an AI image generator.
+3. CRITICAL CONTINUITY MANDATE:
+   - If any character from the 'Active Hero Party & Characters' list is involved in the chosen scene, you MUST describe their physical traits (hair color/style, armor/clothes, held weapons, race, facial structure) EXACTLY as defined so their portrait remains consistent across sessions.
+   - Describe the exact environment (cavern, tavern, castle, swamp, ruins), lighting (torchlight, moonlight, spell glow), mood, composition (cinematic wide-angle, dramatic low-angle), and color palette.
+   - The art style MUST be: "High fantasy RPG hand-drawn illustration style, dungeons and dragons character concept art, rich vivid colors, atmospheric lighting, epic digital painting, highly detailed."
+4. Provide a succinct 1-sentence caption describing the exact event portrayed in the art.
 
-You must respond with valid JSON in the exact following format:
+Respond with valid JSON:
 {
-  "optimizedPrompt": "the highly detailed, continuity-aware visual prompt for the image generator",
-  "chosenSceneCaption": "A short, beautiful caption describing the illustrated moment"
+  "optimizedPrompt": "Your detailed, continuity-aware visual prompt...",
+  "chosenSceneCaption": "A concise 1-sentence caption for the generated artwork"
 }
-Do not include any wordy explanations or markdown backticks around the JSON. Return only raw JSON.
+Do not include markdown backticks outside the JSON. Return raw JSON only.
 `;
 
     // Step 1: Optimize prompt using gemini-3.6-flash
@@ -1395,16 +1426,33 @@ function parseDndBeyondJson(json: any, sourceType: "auto" | "pasted_json"): any 
   const conScore = stats.constitution.total;
   const conMod = Math.floor((conScore - 10) / 2);
 
-  // 5. HP
+  // 5. HP & Hit Point Modifiers
   const baseHp = data.baseHitPoints || 0;
   const bonusHp = data.bonusHitPoints || 0;
   const overrideHp = data.overrideHitPoints || 0;
   const removedHp = data.removedHitPoints || 0;
   const tempHp = data.temporaryHitPoints || 0;
 
+  let hpPerLevelBonus = 0;
+  let flatHpBonus = 0;
+
+  if (data.modifiers) {
+    for (const group in data.modifiers) {
+      if (Array.isArray(data.modifiers[group])) {
+        data.modifiers[group].forEach((mod: any) => {
+          if (mod.subType === "hit-points-per-level") {
+            hpPerLevelBonus += (mod.value || mod.fixedValue || 0) * level;
+          } else if ((mod.subType === "hit-points" || mod.subType === "bonus-hit-points") && !mod.dice && mod.value !== null) {
+            flatHpBonus += (mod.value || mod.fixedValue || 0);
+          }
+        });
+      }
+    }
+  }
+
   let maxHp = overrideHp;
   if (!maxHp) {
-    maxHp = baseHp + bonusHp + (conMod * level);
+    maxHp = baseHp + bonusHp + (conMod * level) + hpPerLevelBonus + flatHpBonus;
   }
   const currentHp = Math.max(0, maxHp + tempHp - removedHp);
 

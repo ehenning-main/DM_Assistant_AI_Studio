@@ -15,6 +15,12 @@ import {
   Shield,
 } from "lucide-react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { CanonConflictAdjudicator } from "./CanonConflictAdjudicator";
+import {
+  parseCanonConflicts,
+  stripCanonConflictsFromMarkdown,
+  SAMPLE_CANON_CONFLICTS,
+} from "../lib/canonConflictParser";
 
 interface ChronicleSummarySectionProps {
   summary: string;
@@ -47,6 +53,7 @@ export function ChronicleSummarySection({
   const [canonDecreeText, setCanonDecreeText] = useState("");
   const [isSavingCanon, setIsSavingCanon] = useState(false);
   const [canonSavedSuccess, setCanonSavedSuccess] = useState<string | null>(null);
+  const [manualStepperActive, setManualStepperActive] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -377,115 +384,148 @@ export function ChronicleSummarySection({
       ) : (
         /* READ-ONLY VIEW MODE */
         <div className="bg-zinc-950/40 p-5 rounded border border-zinc-850 relative group space-y-4">
-          {/* Establish Canonical Truth Action Box if summary is present */}
-          {summary && onEstablishCanon && (
-            <div className="bg-zinc-950 p-4 border border-amber-500/30 rounded-lg space-y-2.5 shadow-md" id="summary-canon-resolver">
-              <div className="flex items-center justify-between gap-2 border-b border-zinc-800 pb-2">
-                <div className="flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-amber-400" />
-                  <span className="font-fantasy font-bold text-xs uppercase text-amber-300 tracking-wide">
-                    Establish Official Canonical Decree for Session
-                  </span>
-                </div>
-                <span className="text-[10px] font-sans text-zinc-400 italic">
-                  Resolves DM Scribe vs Player Journal discrepancies & appends to Session Notes
-                </span>
-              </div>
+          {(() => {
+            const parsedConflicts = parseCanonConflicts(summary);
+            const conflictsToRender = parsedConflicts.length > 0 ? parsedConflicts : (manualStepperActive ? SAMPLE_CANON_CONFLICTS : []);
+            const shouldRenderStepper = conflictsToRender.length > 0;
 
-              {canonSavedSuccess && (
-                <div className="p-2 bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 text-xs font-sans rounded flex items-center justify-between">
-                  <span>{canonSavedSuccess}</span>
-                  <button onClick={() => setCanonSavedSuccess(null)} className="text-zinc-400 hover:text-white">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
+            return (
+              <>
+                {/* Render Interactive Conflict Stepper if conflicts were detected or manually activated */}
+                {shouldRenderStepper && onEstablishCanon && (
+                  <CanonConflictAdjudicator
+                    conflicts={conflictsToRender}
+                    onEstablishCanon={onEstablishCanon}
+                  />
+                )}
 
-              <div className="relative flex items-center gap-2">
-                <input
-                  type="text"
-                  value={canonDecreeText}
-                  onChange={(e) => setCanonDecreeText(e.target.value)}
-                  placeholder="e.g. 'CANON DECREE: DM Log is official truth. Party received 200 GP.'"
-                  className="w-full bg-zinc-900 border border-zinc-750 text-zinc-200 text-xs font-sans rounded py-2 pl-3 pr-28 focus:outline-none focus:border-amber-500 placeholder:text-zinc-600"
-                  id="input-summary-canon-decree"
-                />
-                <button
-                  onClick={async () => {
-                    if (!canonDecreeText.trim()) return;
-                    setIsSavingCanon(true);
-                    try {
-                      await onEstablishCanon(canonDecreeText.trim());
-                      setCanonSavedSuccess("📜 Canonical decree saved and appended to Session Chapter notes!");
-                      setCanonDecreeText("");
-                    } catch (err: any) {
-                      alert(`Failed to save canon decree: ${err.message}`);
-                    } finally {
-                      setIsSavingCanon(false);
+                {/* Establish Canonical Truth Action Box if no automatic conflicts were parsed but summary exists */}
+                {!shouldRenderStepper && summary && onEstablishCanon && (
+                  <div className="bg-zinc-950 p-4 border border-amber-500/30 rounded-lg space-y-2.5 shadow-md" id="summary-canon-resolver">
+                    <div className="flex items-center justify-between gap-2 border-b border-zinc-800 pb-2">
+                      <div className="flex items-center gap-2">
+                        <Shield className="w-4 h-4 text-amber-400" />
+                        <span className="font-fantasy font-bold text-xs uppercase text-amber-300 tracking-wide">
+                          Establish Official Canonical Decree for Session
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-sans text-zinc-400 italic">
+                        Resolves DM Scribe vs Player Journal discrepancies & appends to Session Notes
+                      </span>
+                    </div>
+
+                    {canonSavedSuccess && (
+                      <div className="p-2 bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 text-xs font-sans rounded flex items-center justify-between">
+                        <span>{canonSavedSuccess}</span>
+                        <button onClick={() => setCanonSavedSuccess(null)} className="text-zinc-400 hover:text-white">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="relative flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={canonDecreeText}
+                        onChange={(e) => setCanonDecreeText(e.target.value)}
+                        placeholder="e.g. 'CANON DECREE: DM Log is official truth. Party received 200 GP.'"
+                        className="w-full bg-zinc-900 border border-zinc-750 text-zinc-200 text-xs font-sans rounded py-2 pl-3 pr-28 focus:outline-none focus:border-amber-500 placeholder:text-zinc-600"
+                        id="input-summary-canon-decree"
+                      />
+                      <button
+                        onClick={async () => {
+                          if (!canonDecreeText.trim()) return;
+                          setIsSavingCanon(true);
+                          try {
+                            await onEstablishCanon(canonDecreeText.trim());
+                            setCanonSavedSuccess("📜 Canonical decree saved and appended to Session Chapter notes!");
+                            setCanonDecreeText("");
+                          } catch (err: any) {
+                            alert(`Failed to save canon decree: ${err.message}`);
+                          } finally {
+                            setIsSavingCanon(false);
+                          }
+                        }}
+                        disabled={isSavingCanon || !canonDecreeText.trim()}
+                        className="absolute right-1 top-1/2 -translate-y-1/2 px-3 py-1 bg-amber-500 hover:bg-amber-600 disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-950 font-bold text-xs rounded transition flex items-center gap-1 cursor-pointer shrink-0"
+                        id="btn-save-summary-canon-decree"
+                      >
+                        {isSavingCanon ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Save Canon"}
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-wrap text-[10px] font-sans pt-0.5">
+                      <span className="font-mono text-zinc-500 uppercase">Presets:</span>
+                      <button
+                        type="button"
+                        onClick={() => setCanonDecreeText("CANON RULING: The DM Scribe Log record is official canon going forward.")}
+                        className="px-2 py-0.5 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-amber-300 rounded cursor-pointer"
+                      >
+                        Confirm DM Scribe Log
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCanonDecreeText("CANON RULING: The Player Journal record is accepted as official canon.")}
+                        className="px-2 py-0.5 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-amber-300 rounded cursor-pointer"
+                      >
+                        Accept Player Journal
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setManualStepperActive(true)}
+                        className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 rounded font-semibold flex items-center gap-1 cursor-pointer transition ml-auto"
+                        id="btn-launch-interactive-stepper"
+                      >
+                        <Shield className="w-3 h-3 text-amber-400" />
+                        <span>Launch Interactive Discrepancy Stepper</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {summary ? (
+                  <MarkdownRenderer
+                    content={
+                      parsedConflicts.length > 0
+                        ? stripCanonConflictsFromMarkdown(summary)
+                        : summary
                     }
-                  }}
-                  disabled={isSavingCanon || !canonDecreeText.trim()}
-                  className="absolute right-1 top-1/2 -translate-y-1/2 px-3 py-1 bg-amber-500 hover:bg-amber-600 disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-950 font-bold text-xs rounded transition flex items-center gap-1 cursor-pointer shrink-0"
-                  id="btn-save-summary-canon-decree"
-                >
-                  {isSavingCanon ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Save Canon"}
-                </button>
-              </div>
-
-              <div className="flex items-center gap-1.5 flex-wrap text-[10px] font-sans pt-0.5">
-                <span className="font-mono text-zinc-500 uppercase">Presets:</span>
-                <button
-                  type="button"
-                  onClick={() => setCanonDecreeText("CANON RULING: The DM Scribe Log record is official canon going forward.")}
-                  className="px-2 py-0.5 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-amber-300 rounded"
-                >
-                  Confirm DM Scribe Log
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCanonDecreeText("CANON RULING: The Player Journal record is accepted as official canon.")}
-                  className="px-2 py-0.5 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-amber-300 rounded"
-                >
-                  Accept Player Journal
-                </button>
-              </div>
-            </div>
-          )}
-
-          {summary ? (
-            <MarkdownRenderer content={summary} />
-          ) : (
-            <div className="text-center py-8 space-y-4">
-              <div className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto text-red-500/80">
-                <BookOpen className="w-6 h-6" />
-              </div>
-              <div className="space-y-1">
-                <h4 className="font-fantasy text-zinc-300 font-bold text-sm tracking-wide">
-                  NO CHRONICLE SUMMARY COMPILED YET
-                </h4>
-                <p className="text-zinc-500 text-xs max-w-md mx-auto font-sans leading-relaxed">
-                  Use the AI Chronological Synthesis above to auto-compile session notes, or manually write and customize your own summary notes.
-                </p>
-              </div>
-              <div className="flex items-center justify-center gap-3 pt-2">
-                <button
-                  onClick={onGenerateSummary}
-                  disabled={summarizing}
-                  className="px-4 py-2 bg-red-500 hover:bg-red-600 disabled:bg-zinc-800 text-zinc-950 font-sans font-bold text-xs rounded transition flex items-center gap-1.5 cursor-pointer shadow"
-                >
-                  <Sparkles className="w-3.5 h-3.5 fill-zinc-950" />
-                  <span>Compile with AI</span>
-                </button>
-                <button
-                  onClick={handleStartEditing}
-                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 text-zinc-200 font-sans font-semibold text-xs rounded transition flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Edit3 className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Write Custom Summary</span>
-                </button>
-              </div>
-            </div>
-          )}
+                  />
+                ) : (
+                  <div className="text-center py-8 space-y-4">
+                    <div className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto text-red-500/80">
+                      <BookOpen className="w-6 h-6" />
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="font-fantasy text-zinc-300 font-bold text-sm tracking-wide">
+                        NO CHRONICLE SUMMARY COMPILED YET
+                      </h4>
+                      <p className="text-zinc-500 text-xs max-w-md mx-auto font-sans leading-relaxed">
+                        Use the AI Chronological Synthesis above to auto-compile session notes, or manually write and customize your own summary notes.
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-center gap-3 pt-2">
+                      <button
+                        onClick={onGenerateSummary}
+                        disabled={summarizing}
+                        className="px-4 py-2 bg-red-500 hover:bg-red-600 disabled:bg-zinc-800 text-zinc-950 font-sans font-bold text-xs rounded transition flex items-center gap-1.5 cursor-pointer shadow"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 fill-zinc-950" />
+                        <span>Compile with AI</span>
+                      </button>
+                      <button
+                        onClick={handleStartEditing}
+                        className="px-4 py-2 bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 text-zinc-200 font-sans font-semibold text-xs rounded transition flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Write Custom Summary</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
     </div>

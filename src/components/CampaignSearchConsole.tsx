@@ -2,6 +2,11 @@ import React, { useState } from "react";
 import { Search, Sparkles, Loader2, BookOpen, User, ArrowRight, History, X, ChevronDown, ChevronUp, Compass, Scroll, Shield, Wand2 } from "lucide-react";
 import { Session, HeroCharacter } from "../types";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { CanonConflictAdjudicator } from "./CanonConflictAdjudicator";
+import {
+  parseCanonConflicts,
+  stripCanonConflictsFromMarkdown,
+} from "../lib/canonConflictParser";
 import { motion, AnimatePresence } from "motion/react";
 
 interface CampaignSearchConsoleProps {
@@ -248,13 +253,39 @@ export function CampaignSearchConsole({
               <span className="text-[10px] font-mono text-zinc-500">{currentResult.timestamp}</span>
             </div>
 
-            {/* AI Generated Oracle Answer */}
-            <div className="bg-zinc-950/80 p-5 rounded-lg border border-zinc-800/80 shadow-inner">
-              <MarkdownRenderer content={currentResult.answer} />
-            </div>
+            {/* AI Generated Oracle Answer & Canon Conflict Adjudication */}
+            {(() => {
+              const queryConflicts = parseCanonConflicts(currentResult.answer);
+              const hasQueryConflicts = queryConflicts.length > 0;
 
-            {/* Interactive Canonical Truth Resolver Widget */}
-            {onEstablishCanon && (
+              return (
+                <div className="space-y-4">
+                  {hasQueryConflicts && onEstablishCanon && (
+                    <CanonConflictAdjudicator
+                      conflicts={queryConflicts}
+                      onEstablishCanon={async (decreeText) => {
+                        const targetId = canonSessionId || currentResult.matchingSessions[0]?.id || sessions[0]?.id;
+                        if (!targetId) return;
+                        await onEstablishCanon(targetId, decreeText);
+                      }}
+                    />
+                  )}
+
+                  <div className="bg-zinc-950/80 p-5 rounded-lg border border-zinc-800/80 shadow-inner">
+                    <MarkdownRenderer
+                      content={
+                        hasQueryConflicts
+                          ? stripCanonConflictsFromMarkdown(currentResult.answer)
+                          : currentResult.answer
+                      }
+                    />
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Interactive Canonical Truth Resolver Widget if no automatic conflicts were parsed */}
+            {onEstablishCanon && parseCanonConflicts(currentResult.answer).length === 0 && (
               <div className="bg-zinc-950 p-4 border border-amber-500/30 rounded-lg space-y-3 shadow-md" id="canon-truth-resolver-box">
                 <div className="flex items-center justify-between gap-2 border-b border-zinc-800 pb-2">
                   <div className="flex items-center gap-2">

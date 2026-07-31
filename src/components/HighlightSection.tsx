@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Image, Sparkles, Loader2, Trash2, Edit2, Check, X, AlertCircle } from "lucide-react";
+import { Image, Sparkles, Loader2, Trash2, Edit2, Check, X, AlertCircle, Maximize2, ExternalLink } from "lucide-react";
 import { HighlightItem, CharacterItem, HeroCharacter } from "../types";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -32,6 +32,41 @@ export function HighlightSection({
   const [manualCaption, setManualCaption] = useState("");
   const [continuityGenerating, setContinuityGenerating] = useState(false);
 
+  // Lightbox overlay & new window state
+  const [lightboxImage, setLightboxImage] = useState<{ imageUrl: string; caption: string } | null>(null);
+
+  const openImageFullSize = (imageUrl: string, caption: string) => {
+    // 1. Try opening image directly in a new window/tab
+    try {
+      const newWin = window.open();
+      if (newWin) {
+        newWin.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>${caption ? caption.replace(/</g, "&lt;") : "Full Size Chronicle Artwork"}</title>
+              <style>
+                body { margin: 0; background: #0a0a0c; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; font-family: system-ui, sans-serif; color: #f4f4f5; padding: 20px; box-sizing: border-box; }
+                img { max-width: 95vw; max-height: 85vh; object-fit: contain; border-radius: 8px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); border: 1px solid #3f3f46; }
+                h2 { margin-top: 16px; font-size: 16px; font-weight: 500; color: #f59e0b; text-align: center; max-width: 800px; font-style: italic; }
+              </style>
+            </head>
+            <body>
+              <img src="${imageUrl}" alt="Full Size Artwork" />
+              ${caption ? `<h2>"${caption.replace(/</g, "&lt;")}"</h2>` : ""}
+            </body>
+          </html>
+        `);
+        newWin.document.close();
+      }
+    } catch (err) {
+      console.warn("[IMAGE LIGHTBOX] Direct window.open popup prevented by sandbox:", err);
+    }
+
+    // 2. Also set local Lightbox modal so image is displayed full size inside the app window
+    setLightboxImage({ imageUrl, caption });
+  };
+
   // Action: One-button generator based on session summary with character & visual continuity
   async function generateContinuityHighlight() {
     if (!sessionSummary) return;
@@ -45,6 +80,7 @@ export function HighlightSection({
         body: JSON.stringify({
           summary: sessionSummary,
           characters: characters || [],
+          campaignHeroes: campaignHeroes || [],
           previousHighlights: previousHighlights || [],
         }),
       });
@@ -60,6 +96,7 @@ export function HighlightSection({
         id: "highlight-continuity-" + Date.now(),
         imageUrl: data.imageUrl,
         caption: data.caption || `Chronicle: ${data.optimizedPrompt?.substring(0, 80)}...`,
+        optimizedPrompt: data.optimizedPrompt,
       };
 
       onChange([...highlights, newHighlight]);
@@ -330,18 +367,39 @@ export function HighlightSection({
                 id={`highlight-card-${item.id}`}
               >
                 {/* Thumbnail Display */}
-                <div className="relative aspect-square w-full rounded bg-zinc-900 overflow-hidden border border-zinc-850">
+                <div
+                  onClick={() => openImageFullSize(item.imageUrl, item.caption)}
+                  className="relative aspect-square w-full rounded bg-zinc-900 overflow-hidden border border-zinc-850 cursor-pointer group/thumb"
+                  title="Click to open image full size in a new window"
+                  id={`highlight-img-container-${item.id}`}
+                >
                   <img
                     src={item.imageUrl}
                     alt={item.caption}
                     referrerPolicy="no-referrer"
-                    className="object-cover w-full h-full group-hover:scale-102 transition duration-500"
+                    className="object-cover w-full h-full group-hover/thumb:scale-105 transition duration-500"
                   />
                   
+                  {/* Hover Overlay with Full Size Prompt */}
+                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5 p-3 text-center">
+                    <div className="p-2 bg-amber-500/20 border border-amber-500/40 rounded-full text-amber-300">
+                      <Maximize2 className="w-5 h-5" />
+                    </div>
+                    <span className="text-[11px] font-sans font-bold text-zinc-100 uppercase tracking-wider">
+                      Open Full Size
+                    </span>
+                    <span className="text-[9px] font-mono text-amber-400 flex items-center gap-1">
+                      New Window <ExternalLink className="w-3 h-3" />
+                    </span>
+                  </div>
+
                   {/* Delete Button (Overlay) */}
                   <button
-                    onClick={() => deleteHighlight(item.id)}
-                    className="absolute top-2 right-2 p-1.5 bg-black/70 hover:bg-red-650 text-zinc-300 hover:text-white rounded transition"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteHighlight(item.id);
+                    }}
+                    className="absolute top-2 right-2 p-1.5 bg-black/80 hover:bg-red-650 text-zinc-300 hover:text-white rounded transition z-10"
                     title="Expatriate Highlight"
                     id={`btn-delete-${item.id}`}
                   >
@@ -395,6 +453,73 @@ export function HighlightSection({
           </AnimatePresence>
         </div>
       )}
+
+      {/* FULL SIZE IMAGE LIGHTBOX MODAL */}
+      <AnimatePresence>
+        {lightboxImage && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setLightboxImage(null)}
+            className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-4 sm:p-8 cursor-zoom-out"
+            id="highlight-lightbox-modal"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="relative max-w-5xl max-h-[90vh] w-full flex flex-col items-center justify-center space-y-4 cursor-default"
+            >
+              {/* Modal Top Controls Bar */}
+              <div className="w-full flex items-center justify-between border-b border-zinc-800 pb-3 text-zinc-300">
+                <div className="flex items-center gap-2">
+                  <Image className="w-4 h-4 text-amber-500" />
+                  <span className="font-fantasy font-bold text-xs uppercase tracking-wider text-amber-300">
+                    Full Resolution Artwork
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <a
+                    href={lightboxImage.imageUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 rounded text-xs font-sans font-bold flex items-center gap-1.5 transition"
+                    title="Open directly in a new window tab"
+                    id="btn-lightbox-open-new-window"
+                  >
+                    <span>Open in New Window</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                  <button
+                    onClick={() => setLightboxImage(null)}
+                    className="p-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-full transition"
+                    id="btn-lightbox-close"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Full Size Image */}
+              <div className="relative overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 max-h-[75vh] flex items-center justify-center shadow-2xl">
+                <img
+                  src={lightboxImage.imageUrl}
+                  alt={lightboxImage.caption}
+                  referrerPolicy="no-referrer"
+                  className="max-h-[75vh] max-w-full object-contain rounded"
+                />
+              </div>
+
+              {/* Caption */}
+              {lightboxImage.caption && (
+                <p className="text-center text-sm font-sans italic text-amber-200/90 max-w-2xl leading-relaxed bg-zinc-900/80 px-4 py-2 rounded border border-zinc-800">
+                  "{lightboxImage.caption}"
+                </p>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

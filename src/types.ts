@@ -2,6 +2,7 @@ export interface HighlightItem {
   id: string;
   imageUrl: string;
   caption: string;
+  optimizedPrompt?: string;
 }
 
 export interface CharacterItem {
