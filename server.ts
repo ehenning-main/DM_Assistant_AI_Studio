@@ -13,6 +13,11 @@ const PORT = 3000;
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
+// Health check endpoint
+app.get("/api/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
 // Lazy initialization of Google GenAI client to prevent startup crash if key is missing
 let aiClient: GoogleGenAI | null = null;
 function getAi(): GoogleGenAI {

@@ -46,7 +46,6 @@ import {
 import { MarkdownRenderer } from "./components/MarkdownRenderer";
 import { AudioRecorder } from "./components/AudioRecorder";
 import { HighlightSection } from "./components/HighlightSection";
-import { VideoSection } from "./components/VideoSection";
 import { CharacterTracker } from "./components/CharacterTracker";
 import { MediaForgeWizard } from "./components/MediaForgeWizard";
 import { HeroPartyTracker } from "./components/HeroPartyTracker";
@@ -627,25 +626,6 @@ export default function App() {
     } catch (e: any) {
       alert(`Arcane update bottleneck: ${e.message}`);
     }
-  }
-
-  // Callback: Handles dynamic video payload tracking
-  function handleVideoUpdate(fields: {
-    videoUrl?: string;
-    videoStatus?: "idle" | "generating" | "done" | "error";
-    videoOperationName?: string;
-  }) {
-    if (!selectedSession) return;
-    const updated: Session = {
-      ...selectedSession,
-      ...fields,
-    };
-    updateExistingSession(updated).then(() => {
-      setSelectedSession(updated);
-      setSessions((prev) =>
-        prev.map((s) => (s.id === selectedSession.id ? updated : s))
-      );
-    });
   }
 
   // Render Authentication Portal if not logged in
@@ -1599,16 +1579,6 @@ export default function App() {
                         );
                       });
                     }}
-                  />
-
-                  {/* Short video section */}
-                  <VideoSection
-                    sessionId={selectedSession.id}
-                    videoUrl={selectedSession.videoUrl}
-                    videoStatus={selectedSession.videoStatus}
-                    videoOperationName={selectedSession.videoOperationName}
-                    highlights={selectedSession.highlights || []}
-                    onVideoUpdated={handleVideoUpdate}
                   />
                 </div>
 

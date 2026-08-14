@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Sparkles, Loader2, Image as ImageIcon, Video as VideoIcon, Wand2, AlertTriangle } from "lucide-react";
+import { Sparkles, Loader2, Image as ImageIcon, Wand2, AlertTriangle } from "lucide-react";
 import { HighlightItem, Session } from "../types";
 
 interface MediaForgeWizardProps {
@@ -14,7 +14,6 @@ export function MediaForgeWizard({ session, onUpdateSession }: MediaForgeWizardP
   const [lastNotification, setLastNotification] = useState<string | null>(null);
   const [extractedData, setExtractedData] = useState<{
     imagePrompts: string[];
-    videoPrompt: string;
   } | null>(null);
 
   async function handleAnalyze() {
@@ -31,7 +30,6 @@ export function MediaForgeWizard({ session, onUpdateSession }: MediaForgeWizardP
       const data = await res.json();
       setExtractedData({
         imagePrompts: data.imagePrompts || [],
-        videoPrompt: data.videoPrompt || "",
       });
     } catch (err: any) {
       setLastNotification(`Arcane visualizer failed to dissect chronicle: ${err.message}`);
@@ -47,12 +45,11 @@ export function MediaForgeWizard({ session, onUpdateSession }: MediaForgeWizardP
     setLastNotification(null);
 
     let skippedImagesCount = 0;
-    let videoWasFallback = false;
 
     try {
       const createdHighlights: HighlightItem[] = [];
 
-      // 1. Generate 3 images
+      // Generate 3 images
       const imgPromptsToRun = extractedData.imagePrompts.slice(0, 3);
       for (let i = 0; i < imgPromptsToRun.length; i++) {
         const promptText = imgPromptsToRun[i];
@@ -82,47 +79,10 @@ export function MediaForgeWizard({ session, onUpdateSession }: MediaForgeWizardP
         }
       }
 
-      // 2. Generate video
-      setProgress("Whispering instructions to the Cinematic Scroll compiler...");
-      let finalVideoUrl = "";
-      let finalVideoOp = "";
-      let finalVideoStatus: "idle" | "generating" | "done" | "error" = "generating";
-
-      const startImgBase64 = createdHighlights.length > 0 ? createdHighlights[0].imageUrl.split(",")[1] : undefined;
-
-      try {
-        const res = await fetch("/api/generate-video", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            promptString: extractedData.videoPrompt,
-            startImageBase64: startImgBase64,
-          }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          finalVideoOp = data.operationName;
-          finalVideoStatus = "generating";
-        } else {
-          // Fallback to local canvas loop if Veo triggers fail
-          finalVideoStatus = "done";
-          finalVideoUrl = "canvas_ambient_fallback";
-          videoWasFallback = true;
-        }
-      } catch (err) {
-        finalVideoStatus = "done";
-        finalVideoUrl = "canvas_ambient_fallback";
-        videoWasFallback = true;
-      }
-
       // Save into session
       const updatedSession: Session = {
         ...session,
         highlights: [...(session.highlights || []), ...createdHighlights],
-        videoUrl: finalVideoUrl || session.videoUrl,
-        videoOperationName: finalVideoOp || session.videoOperationName,
-        videoStatus: finalVideoStatus,
       };
 
       setProgress("Finalizing campaign records...");
@@ -130,9 +90,9 @@ export function MediaForgeWizard({ session, onUpdateSession }: MediaForgeWizardP
       setProgress("Forge process accomplished successfully!");
       setExtractedData(null);
 
-      if (skippedImagesCount > 0 || videoWasFallback) {
+      if (skippedImagesCount > 0) {
         setLastNotification(
-          `✨ Multi-Media assets bound! Note: ${skippedImagesCount} illustration slots and/or the video module fallback-simulated automatically due to free-API rate-limits (Google Gemini 429). Feel free to use the manual image attachment section as needed!`
+          `✨ Multi-Media assets bound! Note: ${skippedImagesCount} illustration slots fallback-simulated automatically due to free-API rate-limits. Feel free to use the manual image attachment section as needed!`
         );
       } else {
         setLastNotification("✨ Batch chronicles successfully generated and bound!");
@@ -167,7 +127,7 @@ export function MediaForgeWizard({ session, onUpdateSession }: MediaForgeWizardP
             </span>
           </div>
           <p className="text-zinc-400 text-xs mt-1 max-w-2xl leading-relaxed">
-            Scan your active AI Campaign Chronicle automatically! Our system uses deep narrative reasoning to extract <strong>3 key illustration scenes</strong> and <strong>1 cinematic video momentum</strong>, then batch-forges them directly.
+            Scan your active AI Campaign Chronicle automatically! Our system uses deep narrative reasoning to extract <strong>3 key illustration scenes</strong>, then batch-forges them directly.
           </p>
         </div>
 
@@ -214,46 +174,26 @@ export function MediaForgeWizard({ session, onUpdateSession }: MediaForgeWizardP
             <h4 className="text-xs font-mono text-amber-400 uppercase tracking-widest">📋 DISCOVERED VISUAL SCENARIOS</h4>
             
             <div className="space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                {/* Images */}
-                <div className="space-y-2">
-                  <span className="text-[10px] uppercase font-mono text-zinc-500 flex items-center gap-1.5">
-                    <ImageIcon className="w-3 h-3 text-red-500" /> Key Highlight Drawings (3 slots)
-                  </span>
-                  <div className="space-y-1.5">
-                    {extractedData.imagePrompts.map((prompt, idx) => (
-                      <div key={idx} className="bg-zinc-900/50 p-2.5 rounded border border-zinc-800 text-zinc-300 text-xs font-sans leading-relaxed flex gap-2">
-                        <span className="font-mono text-red-500 font-bold shrink-0">#{idx + 1}</span>
-                        <input
-                          type="text"
-                          value={prompt}
-                          onChange={(e) => {
-                            const updated = [...extractedData.imagePrompts];
-                            updated[idx] = e.target.value;
-                            setExtractedData({ ...extractedData, imagePrompts: updated });
-                          }}
-                          className="bg-transparent border-none text-zinc-200 focus:outline-none w-full italic"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Video */}
-                <div className="space-y-2">
-                  <span className="text-[10px] uppercase font-mono text-zinc-500 flex items-center gap-1.5">
-                    <VideoIcon className="w-3 h-3 text-amber-500" /> Cinematic Camera Direction (1 slot)
-                  </span>
-                  <div className="bg-zinc-900/50 p-2.5 rounded border border-zinc-800 text-zinc-300 text-xs font-sans leading-relaxed h-[112px] flex flex-col justify-between">
-                    <textarea
-                      value={extractedData.videoPrompt}
-                      onChange={(e) => setExtractedData({ ...extractedData, videoPrompt: e.target.value })}
-                      className="bg-transparent border-none text-zinc-200 focus:outline-none w-full h-[70px] resize-none italic"
-                    />
-                    <span className="text-[9px] font-mono text-zinc-500 tracking-normal block text-right mt-1">
-                      Animates highlighting frame #1
-                    </span>
-                  </div>
+              <div className="space-y-2">
+                <span className="text-[10px] uppercase font-mono text-zinc-500 flex items-center gap-1.5">
+                  <ImageIcon className="w-3 h-3 text-red-500" /> Key Highlight Drawings (3 slots)
+                </span>
+                <div className="space-y-1.5">
+                  {extractedData.imagePrompts.map((prompt, idx) => (
+                    <div key={idx} className="bg-zinc-900/50 p-2.5 rounded border border-zinc-800 text-zinc-300 text-xs font-sans leading-relaxed flex gap-2">
+                      <span className="font-mono text-red-500 font-bold shrink-0">#{idx + 1}</span>
+                      <input
+                        type="text"
+                        value={prompt}
+                        onChange={(e) => {
+                          const updated = [...extractedData.imagePrompts];
+                          updated[idx] = e.target.value;
+                          setExtractedData({ ...extractedData, imagePrompts: updated });
+                        }}
+                        className="bg-transparent border-none text-zinc-200 focus:outline-none w-full italic"
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -280,7 +220,7 @@ export function MediaForgeWizard({ session, onUpdateSession }: MediaForgeWizardP
       {forging && (
         <div className="mt-4 pt-4 border-t border-zinc-800 flex flex-col items-center justify-center p-6 bg-zinc-950 rounded border border-zinc-850">
           <Loader2 className="w-8 h-8 text-amber-500 animate-spin mb-3" />
-          <h4 className="text-xs font-mono text-zinc-100 uppercase tracking-widest mb-1.5 animate-pulse">ARCANE IMAGE & CINEMATIC COMPILER ACTIVE</h4>
+          <h4 className="text-xs font-mono text-zinc-100 uppercase tracking-widest mb-1.5 animate-pulse">ARCANE IMAGE COMPILER ACTIVE</h4>
           <p className="text-zinc-400 text-xs font-sans italic text-center max-w-[480px]">
              {progress}
           </p>
@@ -289,3 +229,4 @@ export function MediaForgeWizard({ session, onUpdateSession }: MediaForgeWizardP
     </div>
   );
 }
+
