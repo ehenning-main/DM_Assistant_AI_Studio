@@ -103,6 +103,87 @@ export interface HeroCharacter {
   importedAt?: string;
 }
 
+export interface AudioSpeaker {
+  id: string;
+  label: string; // e.g. "Dungeon Master (DM)", "Balasar (Eric)", etc.
+  role: "DM" | "Player" | "NPC" | "OOC";
+  characterName?: string;
+  playerName?: string;
+  voiceCharacteristics?: string; // e.g. "Deep baritone, narrator cadence", "Fast, high-energy"
+}
+
+export interface AudioInGameMoment {
+  category: "plot" | "combat" | "roleplay" | "loot" | "exploration";
+  title: string;
+  description: string;
+  speakersInvolved?: string[];
+  timestamp?: string;
+}
+
+export interface AudioOutOfCharacterMoment {
+  category: "rules" | "banter" | "strategy" | "logistics";
+  title: string;
+  description: string;
+  speakersInvolved?: string[];
+  timestamp?: string;
+}
+
+export interface SessionAudioItem {
+  id: string;
+  source: "local" | "google_drive" | "live_mic" | "simulation";
+  name: string;
+  blob?: Blob;
+  driveFile?: DriveAudioFile;
+  sizeBytes: number;
+  sizeStr: string;
+  timestamp: number; // Unix epoch milliseconds
+  timestampLabel: string; // e.g. "Sep 17, 19:30:00"
+  timestampSource: "metadata" | "filename_time" | "filename_sequence" | "manual";
+  estimatedDurationSeconds: number;
+  estimatedDurationStr: string;
+  order: number; // 1-based chronological index
+  sessionTimeRange?: string; // e.g. "00:00:00 - 00:45:00"
+  status: "pending" | "processing" | "completed" | "error";
+  error?: string;
+}
+
+export interface AudioSessionAnalysis {
+  transcript: string; // Full dialogue transcript with speaker labels and timestamps
+  speakers: AudioSpeaker[];
+  inGameMoments: AudioInGameMoment[];
+  outOfCharacterMoments: AudioOutOfCharacterMoment[];
+  processedAt?: string;
+  fileName?: string;
+  fileNames?: string[];
+  fileCount?: number;
+  fileDuration?: string;
+  overallAudioNotesMarkdown?: string;
+  chunkCount?: number;
+  sourceType?: "local_upload" | "google_drive" | "live_mic" | "simulation" | "multi_file";
+  driveFileId?: string;
+}
+
+export interface DriveAudioFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: string;
+  sizeBytes?: number;
+  modifiedTime?: string;
+  iconLink?: string;
+  thumbnailLink?: string;
+}
+
+export interface AudioChunkProgress {
+  currentChunk: number;
+  totalChunks: number;
+  timeRangeLabel: string;
+  percentage: number;
+  stageMessage: string;
+  isComplete: boolean;
+  partialTranscript: string;
+}
+
 export interface Session {
   id: string;
   userId: string;
@@ -113,6 +194,7 @@ export interface Session {
   playerNotes?: string;
   audioUrl?: string;
   audioTranscription?: string;
+  audioSessionNotes?: AudioSessionAnalysis;
   summary?: string;
   videoUrl?: string;
   videoOperationName?: string;

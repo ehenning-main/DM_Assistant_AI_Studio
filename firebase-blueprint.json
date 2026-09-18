@@ -75,6 +75,10 @@
           "type": "string",
           "description": "The transcribed audio, if uploaded and parsed"
         },
+        "audioSessionNotes": {
+          "type": "object",
+          "description": "Structured audio session notes with transcript, speaker voices attribution, in-game key moments, and out-of-character key moments"
+        },
         "summary": {
           "type": "string",
           "description": "AI-generated summary and bulleted key points"

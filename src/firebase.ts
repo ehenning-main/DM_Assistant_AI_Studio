@@ -71,18 +71,77 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Google Login Pop-up Trigger
-export async function logInWithGoogle() {
+// In-memory token cache (never stored in localStorage or sessionStorage)
+let cachedAccessToken: string | null = null;
+let isSigningIn = false;
+
+// Create configured GoogleAuthProvider with Drive Readonly scope
+export function getGoogleDriveAuthProvider(): GoogleAuthProvider {
+  const provider = new GoogleAuthProvider();
+  provider.addScope("https://www.googleapis.com/auth/drive.readonly");
+  return provider;
+}
+
+// Google Login Pop-up Trigger with Drive Scopes & Token Acquisition
+export async function logInWithGoogle(): Promise<{ user: any; accessToken: string | null }> {
   if (!isRealFirebase || !auth) {
     throw new Error("Cloud auth triggers are inactive in Local mode.");
   }
-  const provider = new GoogleAuthProvider();
-  return signInWithPopup(auth, provider);
+  isSigningIn = true;
+  try {
+    const provider = getGoogleDriveAuthProvider();
+    const result = await signInWithPopup(auth, provider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (credential?.accessToken) {
+      cachedAccessToken = credential.accessToken;
+    }
+    return { user: result.user, accessToken: cachedAccessToken };
+  } catch (error: any) {
+    console.error("Sign in error:", error);
+    throw error;
+  } finally {
+    isSigningIn = false;
+  }
 }
+
+// Get the current cached Google OAuth access token
+export async function getGoogleAccessToken(): Promise<string | null> {
+  return cachedAccessToken;
+}
+
+// Explicit function to request/refresh Drive access token
+export async function requestDriveAccessToken(): Promise<string | null> {
+  if (cachedAccessToken) {
+    return cachedAccessToken;
+  }
+  const result = await logInWithGoogle();
+  return result.accessToken;
+}
+
+// Initialize auth state listener conforming to workspace integration standard
+export const initAuth = (
+  onAuthSuccess?: (user: any, token: string | null) => void,
+  onAuthFailure?: () => void
+) => {
+  if (!isRealFirebase || !auth) {
+    if (onAuthFailure) onAuthFailure();
+    return () => {};
+  }
+  return auth.onAuthStateChanged(async (firebaseUser: any) => {
+    if (firebaseUser) {
+      if (onAuthSuccess) onAuthSuccess(firebaseUser, cachedAccessToken);
+    } else {
+      cachedAccessToken = null;
+      if (onAuthFailure) onAuthFailure();
+    }
+  });
+};
 
 // Sign Out Trigger
 export async function logOutUser() {
+  cachedAccessToken = null;
   if (isRealFirebase && auth) {
     return signOut(auth);
   }
 }
+
