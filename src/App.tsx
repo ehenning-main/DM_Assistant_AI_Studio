@@ -26,10 +26,11 @@ import {
   Compass,
   ArrowUpDown,
   Search,
+  Mic,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
-import { Session, Campaign, HighlightItem, CharacterItem } from "./types";
+import { Session, Campaign, HighlightItem, CharacterItem, AudioSessionAnalysis } from "./types";
 import { isRealFirebase, auth, logInWithGoogle, logOutUser } from "./firebase";
 import {
   fetchAllCampaigns,
@@ -45,8 +46,8 @@ import {
 // Modular sub-components
 import { MarkdownRenderer } from "./components/MarkdownRenderer";
 import { AudioRecorder } from "./components/AudioRecorder";
+import { AudioSessionNotesView } from "./components/AudioSessionNotesView";
 import { HighlightSection } from "./components/HighlightSection";
-import { VideoSection } from "./components/VideoSection";
 import { CharacterTracker } from "./components/CharacterTracker";
 import { MediaForgeWizard } from "./components/MediaForgeWizard";
 import { HeroPartyTracker } from "./components/HeroPartyTracker";
@@ -94,8 +95,9 @@ export default function App() {
   const [sessionTitle, setSessionTitle] = useState("");
   const [sessionDate, setSessionDate] = useState("");
   const [audioTranscription, setAudioTranscription] = useState("");
+  const [audioSessionNotes, setAudioSessionNotes] = useState<AudioSessionAnalysis | undefined>(undefined);
   const [notesSaving, setNotesSaving] = useState(false);
-  const [activeNoteTab, setActiveNoteTab] = useState<"dm" | "player">("dm");
+  const [activeNoteTab, setActiveNoteTab] = useState<"dm" | "player" | "audio">("dm");
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"chapters" | "party">("chapters");
   const [isLoreExpanded, setIsLoreExpanded] = useState(false);
   const [sessionSortMode, setSessionSortMode] = useState<"date-desc" | "date-asc" | "name-asc" | "name-desc" | "manual">(() => {
@@ -203,6 +205,7 @@ export default function App() {
         setNotes(nextActive.notes);
         setPlayerNotes(nextActive.playerNotes || "");
         setAudioTranscription(nextActive.audioTranscription || "");
+        setAudioSessionNotes(nextActive.audioSessionNotes);
       } else {
         setSelectedSession(null);
       }
@@ -227,6 +230,7 @@ export default function App() {
       setNotes(nextActive.notes);
       setPlayerNotes(nextActive.playerNotes || "");
       setAudioTranscription(nextActive.audioTranscription || "");
+      setAudioSessionNotes(nextActive.audioSessionNotes);
     } else {
       setSelectedSession(null);
     }
@@ -451,6 +455,7 @@ export default function App() {
       notes: notes,
       playerNotes: playerNotes,
       audioTranscription: audioTranscription,
+      audioSessionNotes: audioSessionNotes,
       updatedAt: new Date().toISOString(),
     };
 
@@ -529,6 +534,7 @@ export default function App() {
           notes: notes,
           playerNotes: playerNotes,
           audioTranscription: audioTranscription,
+          audioSessionNotes: audioSessionNotes || selectedSession.audioSessionNotes,
         }),
       });
 
@@ -627,25 +633,6 @@ export default function App() {
     } catch (e: any) {
       alert(`Arcane update bottleneck: ${e.message}`);
     }
-  }
-
-  // Callback: Handles dynamic video payload tracking
-  function handleVideoUpdate(fields: {
-    videoUrl?: string;
-    videoStatus?: "idle" | "generating" | "done" | "error";
-    videoOperationName?: string;
-  }) {
-    if (!selectedSession) return;
-    const updated: Session = {
-      ...selectedSession,
-      ...fields,
-    };
-    updateExistingSession(updated).then(() => {
-      setSelectedSession(updated);
-      setSessions((prev) =>
-        prev.map((s) => (s.id === selectedSession.id ? updated : s))
-      );
-    });
   }
 
   // Render Authentication Portal if not logged in
@@ -1116,6 +1103,7 @@ export default function App() {
                         setNotes(item.notes);
                         setPlayerNotes(item.playerNotes || "");
                         setAudioTranscription(item.audioTranscription || "");
+                        setAudioSessionNotes(item.audioSessionNotes);
                       }}
                       className={`group w-full p-3 text-left rounded border transition flex items-center justify-between cursor-pointer ${
                         selectedSession?.id === item.id
@@ -1256,6 +1244,7 @@ export default function App() {
                     setNotes(match.notes);
                     setPlayerNotes(match.playerNotes || "");
                     setAudioTranscription(match.audioTranscription || "");
+                    setAudioSessionNotes(match.audioSessionNotes);
                     setActiveWorkspaceTab("chapters");
                   }
                 }}
@@ -1381,179 +1370,289 @@ export default function App() {
                 </div>
 
                 {/* Subsections: Notes notepad + recorder split */}
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                  {/* Left panel: Raw written notes */}
-                  <div className="space-y-4 p-5 bg-zinc-900 border border-zinc-800 rounded-lg parchment-glow flex flex-col justify-between">
-                    <div className="space-y-3">
-                      {/* Tabs Header inside the Notes Box */}
-                      <div className="flex border-b border-zinc-800 font-sans text-xs uppercase tracking-wider mb-2">
-                        <button
-                          onClick={() => setActiveNoteTab("dm")}
-                          className={`flex-1 px-3 py-2 text-center border-b-2 font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
-                            activeNoteTab === "dm"
-                              ? "border-red-500 text-red-100 font-bold bg-zinc-950/20"
-                              : "border-transparent text-zinc-500 hover:text-zinc-300"
-                          }`}
-                          id="btn-tab-dm"
-                        >
-                          <BookOpen className="w-3.5 h-3.5" /> DM Scribe Logs
-                        </button>
-                        <button
-                          onClick={() => setActiveNoteTab("player")}
-                          className={`flex-1 px-3 py-2 text-center border-b-2 font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
-                            activeNoteTab === "player"
-                              ? "border-amber-500 text-amber-100 font-bold bg-zinc-950/20"
-                              : "border-transparent text-zinc-500 hover:text-zinc-300"
-                          }`}
-                          id="btn-tab-players"
-                        >
-                          <Users className="w-3.5 h-3.5" /> Player Journal
-                        </button>
-                      </div>
+                {(() => {
+                  const currentCampaignHeroes = campaigns.find((c) => c.id === selectedCampaignId)?.heroes || [];
+                  const characterRosterForAudio = [
+                    ...currentCampaignHeroes.map((h) => ({
+                      name: h.name,
+                      playerName: h.playerName,
+                      classType: h.classType,
+                      role: "Hero Player",
+                    })),
+                    ...(selectedSession?.characters || []).map((c) => ({
+                      name: c.name,
+                      playerName: undefined,
+                      classType: undefined,
+                      role: c.role || "NPC",
+                    })),
+                  ];
 
-                      <div className="flex items-center justify-between border-b border-zinc-850 pb-2">
-                        <div className="flex items-center gap-2">
-                          <Edit className="w-4 h-4 text-red-500 animate-pulse" />
-                          <h3 className="font-fantasy font-semibold text-zinc-100 tracking-wider text-sm uppercase">
-                            {activeNoteTab === "dm" ? "DM Adventure Scribe Ledger" : "Players' Campaign Chronicles"}
-                          </h3>
+                  return (
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                      {/* Left panel: Distinct notes sources (DM, Player, Audio) */}
+                      <div className="space-y-4 p-5 bg-zinc-900 border border-zinc-800 rounded-lg parchment-glow flex flex-col justify-between">
+                        <div className="space-y-3">
+                          {/* 3-Source Tabs Header: DM Scribe, Player Journal, Audio Session Notes */}
+                          <div className="flex border-b border-zinc-800 font-sans text-xs uppercase tracking-wider mb-2 gap-1">
+                            <button
+                              onClick={() => setActiveNoteTab("dm")}
+                              className={`flex-1 px-2.5 py-2 text-center border-b-2 font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                                activeNoteTab === "dm"
+                                  ? "border-red-500 text-red-100 font-bold bg-zinc-950/20"
+                                  : "border-transparent text-zinc-500 hover:text-zinc-300"
+                              }`}
+                              id="btn-tab-dm"
+                            >
+                              <BookOpen className="w-3.5 h-3.5" />
+                              <span className="truncate">DM Scribe Logs</span>
+                            </button>
+                            <button
+                              onClick={() => setActiveNoteTab("player")}
+                              className={`flex-1 px-2.5 py-2 text-center border-b-2 font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                                activeNoteTab === "player"
+                                  ? "border-amber-500 text-amber-100 font-bold bg-zinc-950/20"
+                                  : "border-transparent text-zinc-500 hover:text-zinc-300"
+                              }`}
+                              id="btn-tab-players"
+                            >
+                              <Users className="w-3.5 h-3.5" />
+                              <span className="truncate">Player Journal</span>
+                            </button>
+                            <button
+                              onClick={() => setActiveNoteTab("audio")}
+                              className={`flex-1 px-2.5 py-2 text-center border-b-2 font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                                activeNoteTab === "audio"
+                                  ? "border-purple-500 text-purple-100 font-bold bg-zinc-950/20"
+                                  : "border-transparent text-zinc-500 hover:text-zinc-300"
+                              }`}
+                              id="btn-tab-audio"
+                            >
+                              <Mic className="w-3.5 h-3.5 text-purple-400" />
+                              <span className="truncate">Audio Notes</span>
+                              {audioSessionNotes && (
+                                <span className="w-2 h-2 rounded-full bg-red-500 inline-block shrink-0 animate-pulse" title="Audio notes extracted" />
+                              )}
+                            </button>
+                          </div>
+
+                          <div className="flex items-center justify-between border-b border-zinc-850 pb-2">
+                            <div className="flex items-center gap-2">
+                              {activeNoteTab === "audio" ? (
+                                <Mic className="w-4 h-4 text-purple-400 animate-pulse" />
+                              ) : (
+                                <Edit className="w-4 h-4 text-red-500 animate-pulse" />
+                              )}
+                              <h3 className="font-fantasy font-semibold text-zinc-100 tracking-wider text-sm uppercase">
+                                {activeNoteTab === "dm"
+                                  ? "DM Adventure Scribe Ledger"
+                                  : activeNoteTab === "player"
+                                  ? "Players' Campaign Chronicles"
+                                  : "Recorded Audio Intelligence & Transcripts"}
+                              </h3>
+                            </div>
+                            <span className="font-mono text-[9px] text-zinc-500">
+                              {activeNoteTab === "audio"
+                                ? "Separate Audio Source"
+                                : "Supports Markdown markup"}
+                            </span>
+                          </div>
+
+                          {/* Fast templates injection toolbar based on active tab */}
+                          {activeNoteTab === "dm" && (
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[10px] text-zinc-400 font-mono">Inject DM template:</span>
+                              <button
+                                onClick={() => injectTemplate("combat")}
+                                className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-red-500 hover:text-red-400 rounded transition cursor-pointer"
+                                id="btn-template-combat"
+                              >
+                                ⚔️ Combat Tracker
+                              </button>
+                              <button
+                                onClick={() => injectTemplate("npc")}
+                                className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-red-500 hover:text-red-400 rounded transition cursor-pointer"
+                                id="btn-template-npc"
+                              >
+                                👤 Improv NPC
+                              </button>
+                              <button
+                                onClick={() => injectTemplate("loot")}
+                                className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-red-500 hover:text-red-400 rounded transition cursor-pointer"
+                                id="btn-template-loot"
+                              >
+                                🪙 Gold / Magic Loot
+                              </button>
+                            </div>
+                          )}
+
+                          {activeNoteTab === "player" && (
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[10px] text-amber-400 font-mono">Inject Player template:</span>
+                              <button
+                                onClick={() => injectTemplate("quest")}
+                                className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-amber-500 hover:text-amber-400 rounded transition cursor-pointer"
+                                id="btn-template-quest"
+                              >
+                                📜 Quest Codex
+                              </button>
+                              <button
+                                onClick={() => injectTemplate("inventory")}
+                                className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-amber-500 hover:text-amber-400 rounded transition cursor-pointer"
+                                id="btn-template-inventory"
+                              >
+                                🎒 Party Stash
+                              </button>
+                              <button
+                                onClick={() => injectTemplate("theories")}
+                                className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-amber-500 hover:text-amber-400 rounded transition cursor-pointer"
+                                id="btn-template-theories"
+                              >
+                                💡 Theories / Clues
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Content Render: Either AudioSessionNotesView or Markdown Textareas */}
+                          {activeNoteTab === "audio" ? (
+                            <AudioSessionNotesView
+                              audioNotes={audioSessionNotes}
+                              audioTranscription={audioTranscription}
+                              onUpdateAudioNotes={async (updatedNotes) => {
+                                setAudioSessionNotes(updatedNotes);
+                                if (selectedSession) {
+                                  const updated: Session = {
+                                    ...selectedSession,
+                                    audioSessionNotes: updatedNotes,
+                                    updatedAt: new Date().toISOString(),
+                                  };
+                                  await updateExistingSession(updated);
+                                  setSelectedSession(updated);
+                                  setSessions((prev) =>
+                                    prev.map((s) => (s.id === selectedSession.id ? updated : s))
+                                  );
+                                }
+                              }}
+                              onSwitchToAudioUpload={() => {
+                                const el = document.getElementById("audio-panel-root");
+                                el?.scrollIntoView({ behavior: "smooth" });
+                              }}
+                            />
+                          ) : activeNoteTab === "dm" ? (
+                            <textarea
+                              value={notes}
+                              onChange={(e) => setNotes(e.target.value)}
+                              placeholder="Detail story happenings, dice rolls, campaigns events, player dialogue..."
+                              rows={12}
+                              className="w-full bg-zinc-950 border border-zinc-800 rounded p-4 text-zinc-200 text-sm font-sans focus:outline-none focus:border-red-500 font-sans leading-relaxed transition"
+                              id="raw-notes-notepad"
+                            />
+                          ) : (
+                            <textarea
+                              value={playerNotes}
+                              onChange={(e) => setPlayerNotes(e.target.value)}
+                              placeholder="Record player-led diaries, quest notes, group stash, active campaign theories..."
+                              rows={12}
+                              className="w-full bg-zinc-950 border border-zinc-850 rounded p-4 text-amber-100/90 text-sm font-sans focus:outline-none focus:border-amber-500 font-sans leading-relaxed transition"
+                              id="player-notes-notepad"
+                            />
+                          )}
                         </div>
-                        <span className="font-mono text-[9px] text-zinc-500">
-                          Supports Markdown markup
-                        </span>
-                      </div>
 
-                      {/* Fast templates injection toolbar based on active tab */}
-                      {activeNoteTab === "dm" ? (
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[10px] text-zinc-400 font-mono">Inject DM template:</span>
-                          <button
-                            onClick={() => injectTemplate("combat")}
-                            className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-red-500 hover:text-red-400 rounded transition cursor-pointer"
-                            id="btn-template-combat"
-                          >
-                            ⚔️ Combat Tracker
-                          </button>
-                          <button
-                            onClick={() => injectTemplate("npc")}
-                            className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-red-500 hover:text-red-400 rounded transition cursor-pointer"
-                            id="btn-template-npc"
-                          >
-                            👤 Improv NPC
-                          </button>
-                          <button
-                            onClick={() => injectTemplate("loot")}
-                            className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-red-500 hover:text-red-400 rounded transition cursor-pointer"
-                            id="btn-template-loot"
-                          >
-                            🪙 Gold / Magic Loot
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[10px] text-amber-400 font-mono">Inject Player template:</span>
-                          <button
-                            onClick={() => injectTemplate("quest")}
-                            className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-amber-500 hover:text-amber-400 rounded transition cursor-pointer"
-                            id="btn-template-quest"
-                          >
-                            📜 Quest Codex
-                          </button>
-                          <button
-                            onClick={() => injectTemplate("inventory")}
-                            className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-amber-500 hover:text-amber-400 rounded transition cursor-pointer"
-                            id="btn-template-inventory"
-                          >
-                            🎒 Party Stash
-                          </button>
-                          <button
-                            onClick={() => injectTemplate("theories")}
-                            className="px-2 py-1 bg-zinc-950 text-[10px] border border-zinc-800 hover:border-amber-500 hover:text-amber-400 rounded transition cursor-pointer"
-                            id="btn-template-theories"
-                          >
-                            💡 Theories / Clues
-                          </button>
-                        </div>
-                      )}
-
-                      {activeNoteTab === "dm" ? (
-                        <textarea
-                          value={notes}
-                          onChange={(e) => setNotes(e.target.value)}
-                          placeholder="Detail story happenings, dice rolls, campaigns events, player dialogue..."
-                          rows={12}
-                          className="w-full bg-zinc-950 border border-zinc-800 rounded p-4 text-zinc-200 text-sm font-sans focus:outline-none focus:border-red-500 font-sans leading-relaxed transition"
-                          id="raw-notes-notepad"
-                        />
-                      ) : (
-                        <textarea
-                          value={playerNotes}
-                          onChange={(e) => setPlayerNotes(e.target.value)}
-                          placeholder="Record player-led diaries, quest notes, group stash, active campaign theories..."
-                          rows={12}
-                          className="w-full bg-zinc-950 border border-zinc-850 rounded p-4 text-amber-100/90 text-sm font-sans focus:outline-none focus:border-amber-500 font-sans leading-relaxed transition"
-                          id="player-notes-notepad"
-                        />
-                      )}
-                    </div>
-
-                    <div className="flex justify-end pt-3">
-                      <button
-                        onClick={saveSessionChanges}
-                        disabled={notesSaving}
-                        className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-red-400 rounded text-xs transition font-semibold"
-                        id="btn-quick-save-notes"
-                      >
-                        {notesSaving ? "Saving Ledger..." : "💾 Quick Save Logs"}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Right panel: Audio recorder */}
-                  <div className="space-y-4 flex flex-col">
-                    <AudioRecorder
-                      onTranscriptionComplete={(text) => {
-                        setAudioTranscription(text);
-                        // Auto-append transcription to campaign notes
-                        setNotes((prev) => prev + `\n\n### 🎙️ VOICE CHRONICLE RECORDING\n- ${text}`);
-                        saveSessionChanges();
-                      }}
-                      currentTranscription={audioTranscription}
-                      onAudioUpload={async (base64) => {
-                        // Keep track of audio or update status
-                      }}
-                    />
-
-                    {/* Integrated summaries triggers */}
-                    <div className="p-5 bg-zinc-900 border border-zinc-800 rounded-lg parchment-glow text-center space-y-4">
-                      <div className="flex items-center gap-1.5 justify-center text-red-500">
-                        <Wand2 className="w-5 h-5 animate-spin-slow" />
-                        <h4 className="font-fantasy font-bold tracking-wider text-sm uppercase">
-                          AI Chronological Synthesis
-                        </h4>
-                      </div>
-                      <p className="text-zinc-400 text-xs tracking-normal leading-relaxed max-w-[340px] mx-auto font-sans">
-                        Fuses both the Adventure logs and transcribes to autogenerate themed campaigns overviews, combat highlight stats, mysteries, loot indices, and more.
-                      </p>
-                      <button
-                        onClick={generateAISummary}
-                        disabled={summarizing}
-                        className="px-4 py-2 bg-red-500 hover:bg-red-600 disabled:bg-zinc-800 disabled:text-zinc-500 text-zinc-950 font-sans font-bold text-xs sm:text-sm rounded transition active:scale-95 flex items-center justify-center gap-1.5 mx-auto cursor-pointer"
-                        id="btn-ai-synthesize"
-                      >
-                        {summarizing ? (
-                          <>
-                            <Loader2 className="w-4.5 h-4.5 animate-spin" /> Channeling Arcane AI...
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="w-4.5 h-4.5 fill-zinc-950" /> Compile Campaign Chronicle Summary
-                          </>
+                        {activeNoteTab !== "audio" && (
+                          <div className="flex justify-end pt-3">
+                            <button
+                              onClick={saveSessionChanges}
+                              disabled={notesSaving}
+                              className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-red-400 rounded text-xs transition font-semibold cursor-pointer"
+                              id="btn-quick-save-notes"
+                            >
+                              {notesSaving ? "Saving Ledger..." : "💾 Quick Save Logs"}
+                            </button>
+                          </div>
                         )}
-                      </button>
+                      </div>
+
+                      {/* Right panel: Audio recorder and Multi-Source Synthesis */}
+                      <div className="space-y-4 flex flex-col">
+                        <AudioRecorder
+                          onTranscriptionComplete={(text) => {
+                            setAudioTranscription(text);
+                            setNotes((prev) => prev + `\n\n### 🎙️ VOICE CHRONICLE RECORDING\n- ${text}`);
+                            saveSessionChanges();
+                          }}
+                          currentTranscription={audioTranscription}
+                          audioSessionNotes={audioSessionNotes}
+                          onAudioAnalysisComplete={async (analysis, rawText) => {
+                            setAudioSessionNotes(analysis);
+                            setAudioTranscription(rawText);
+                            if (selectedSession) {
+                              const updated: Session = {
+                                ...selectedSession,
+                                audioTranscription: rawText,
+                                audioSessionNotes: analysis,
+                                updatedAt: new Date().toISOString(),
+                              };
+                              await updateExistingSession(updated);
+                              setSelectedSession(updated);
+                              setSessions((prev) =>
+                                prev.map((s) => (s.id === selectedSession.id ? updated : s))
+                              );
+                            }
+                            setActiveNoteTab("audio");
+                          }}
+                          characterRoster={characterRosterForAudio}
+                          dmName="Dungeon Master (DM)"
+                          sessionTitle={sessionTitle}
+                          sessionDate={sessionDate}
+                          onViewSeparateAudioNotes={() => setActiveNoteTab("audio")}
+                        />
+
+                        {/* Integrated 3-Source summaries triggers */}
+                        <div className="p-5 bg-zinc-900 border border-zinc-800 rounded-lg parchment-glow text-center space-y-4">
+                          <div className="flex items-center gap-1.5 justify-center text-red-500">
+                            <Wand2 className="w-5 h-5 animate-spin-slow" />
+                            <h4 className="font-fantasy font-bold tracking-wider text-sm uppercase">
+                              Integrated Chronicle Synthesis
+                            </h4>
+                          </div>
+                          <p className="text-zinc-400 text-xs tracking-normal leading-relaxed max-w-[360px] mx-auto font-sans">
+                            Integrates all 3 distinct records: <strong>DM Scribe Logs</strong>, <strong>Player Journal</strong>, and <strong>Audio Notes & Transcript</strong> into a unified, definitive Campaign Chronicle.
+                          </p>
+
+                          {/* Source pills */}
+                          <div className="flex items-center justify-center gap-2 text-[10px] font-mono flex-wrap">
+                            <span className={`px-2 py-0.5 rounded border ${notes ? "bg-red-950/40 text-red-300 border-red-500/40" : "bg-zinc-950 text-zinc-500 border-zinc-800"}`}>
+                              {notes ? "✓ DM Notes" : "○ DM Notes"}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded border ${playerNotes ? "bg-amber-950/40 text-amber-300 border-amber-500/40" : "bg-zinc-950 text-zinc-500 border-zinc-800"}`}>
+                              {playerNotes ? "✓ Player Journal" : "○ Player Journal"}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded border ${audioSessionNotes || audioTranscription ? "bg-purple-950/40 text-purple-300 border-purple-500/40" : "bg-zinc-950 text-zinc-500 border-zinc-800"}`}>
+                              {audioSessionNotes ? "✓ Voice-Attributed Audio" : audioTranscription ? "✓ Audio Transcript" : "○ Audio Notes"}
+                            </span>
+                          </div>
+
+                          <button
+                            onClick={generateAISummary}
+                            disabled={summarizing}
+                            className="px-4 py-2.5 bg-red-500 hover:bg-red-600 disabled:bg-zinc-800 disabled:text-zinc-500 text-zinc-950 font-sans font-bold text-xs sm:text-sm rounded transition active:scale-95 flex items-center justify-center gap-1.5 mx-auto cursor-pointer shadow-md"
+                            id="btn-ai-synthesize"
+                          >
+                            {summarizing ? (
+                              <>
+                                <Loader2 className="w-4.5 h-4.5 animate-spin" /> Synthesizing 3-Source Chronicle...
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="w-4.5 h-4.5 fill-zinc-950" /> Weave Integrated Master Summary
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* AI Summary Display Container - Parchment paper styling with full editing capabilities */}
                 <ChronicleSummarySection
@@ -1599,16 +1698,6 @@ export default function App() {
                         );
                       });
                     }}
-                  />
-
-                  {/* Short video section */}
-                  <VideoSection
-                    sessionId={selectedSession.id}
-                    videoUrl={selectedSession.videoUrl}
-                    videoStatus={selectedSession.videoStatus}
-                    videoOperationName={selectedSession.videoOperationName}
-                    highlights={selectedSession.highlights || []}
-                    onVideoUpdated={handleVideoUpdate}
                   />
                 </div>
 

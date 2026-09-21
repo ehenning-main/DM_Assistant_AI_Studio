@@ -13,6 +13,11 @@ const PORT = 3000;
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
+// Health check endpoint
+app.get("/api/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
 // Lazy initialization of Google GenAI client to prevent startup crash if key is missing
 let aiClient: GoogleGenAI | null = null;
 function getAi(): GoogleGenAI {
@@ -193,12 +198,11 @@ app.post("/api/transcribe-audio", async (req, res) => {
     };
 
     const promptPart = {
-      text: "You are an expert RPG Dungeon Master scribe. Play close attention to the following recorded audio snippet from a TTRPG game session. Please write a highly detailed transcription and chronicle what happened. Include key dialog, narrative descriptions, names of characters or locations mentioned, dice rolls, battle events, and any key gameplay discussions.",
+      text: "You are an expert RPG Dungeon Master scribe. Pay close attention to the following recorded audio snippet from a TTRPG game session. Please write a highly detailed transcription and chronicle what happened. Include key dialog, narrative descriptions, names of characters or locations mentioned, dice rolls, battle events, and any key gameplay discussions.",
     };
 
-    // Use gold standards: gemini-3.6-flash for basic text and audio transcription
     const response = await generateContentWithRetry({
-      model: "gemini-3.6-flash",
+      model: "gemini-3.8-flash",
       contents: { parts: [audioPart, promptPart] },
     });
 
@@ -209,35 +213,331 @@ app.post("/api/transcribe-audio", async (req, res) => {
   }
 });
 
-// 2. Automated AI Session Summarizer
+// 1.5 Advanced Session Audio Processor: Speaker Matching, Diarization, Full Transcript, In-Game & OOC Moments
+// Supports single audio files or multi-hour chunked audio segments (up to 6 hours)
+app.post("/api/process-session-audio", async (req, res) => {
+  try {
+    const {
+      audioData,
+      mimeType,
+      characterRoster,
+      dmName,
+      sessionTitle,
+      sessionDate,
+      chunkIndex = 0,
+      totalChunks = 1,
+      timeOffsetMinutes = 0,
+      previousSpeakers = [],
+      previousNarrativeContext = "",
+    } = req.body;
+
+    if (!audioData) {
+      res.status(400).json({ error: "Missing audio data for session analysis." });
+      return;
+    }
+
+    const rosterDescription = Array.isArray(characterRoster) && characterRoster.length > 0
+      ? characterRoster.map((c: any) => `- Character: "${c.name || 'Hero'}", Player: "${c.playerName || 'Player'}", Class/Role: "${c.classType || c.role || 'Adventurer'}"`).join("\n")
+      : "- Balasar (Player: Eric, Dragonborn Paladin)\n- Elara (Player: Sarah, Elven Mage)\n- Shadow (Player: Dave, Rogue)";
+
+    const cleanDm = dmName || "Dungeon Master (DM)";
+    const cleanTitle = sessionTitle || "Campaign Session";
+
+    // Format time offset nicely
+    const startHour = Math.floor(timeOffsetMinutes / 60);
+    const startMin = timeOffsetMinutes % 60;
+    const startOffsetStr = `${String(startHour).padStart(2, "0")}:${String(startMin).padStart(2, "0")}:00`;
+
+    const isMultiChunk = totalChunks > 1;
+    const chunkContext = isMultiChunk
+      ? `\n=== MULTI-HOUR SESSION STREAMING CONTEXT ===
+This audio file is PART ${chunkIndex + 1} OF ${totalChunks} of a multi-hour session recording.
+Starting Time Offset: ${startOffsetStr} (${timeOffsetMinutes} minutes into the session).
+IMPORTANT: ALL timestamps in this part MUST reflect absolute session time starting from [${startOffsetStr}]. Example:
+[${startOffsetStr}] [${cleanDm}]: ...
+[${String(startHour).padStart(2, "0")}:${String(startMin + 1).padStart(2, "0")}:14] [Balasar (Eric)]: ...
+
+PREVIOUSLY IDENTIFIED VOICES & SPEAKERS IN EARLIER PARTS (Maintain consistency):
+${Array.isArray(previousSpeakers) && previousSpeakers.length > 0
+  ? previousSpeakers.map((s: any) => `- ${s.label} (${s.role}): ${s.voiceCharacteristics || "Identified in previous act"}`).join("\n")
+  : "First chunk, establishing baseline voice signatures."}
+
+RUNNING STORY & GAMEPLAY SUMMARY FROM EARLIER PARTS:
+${previousNarrativeContext || "Session beginning."}\n`
+      : "";
+
+    const prompt = `
+You are an expert tabletop RPG audio engineer, forensic acoustic linguist, and master fantasy scribe.
+Analyze this recorded session audio file from the TTRPG campaign "${cleanTitle}" (Date: ${sessionDate || "Active"}).
+${chunkContext}
+KNOWN PARTY ROSTER & ROLES TO MATCH VOICES AGAINST:
+- Lead Storyteller & Adjudicator: ${cleanDm}
+- Player Characters:
+${rosterDescription}
+
+YOUR AUDIO PROCESSING OBJECTIVES:
+1. VOICE EVALUATION & SPEAKER MATCHING:
+   - Carefully evaluate vocal pitch, speech cadence, tone, accent, volume, and conversational dynamics in the audio.
+   - Accurately determine who is speaking at each point:
+     * Match narrator/adjudicator/monster/NPC voices to "${cleanDm}".
+     * Match player voices to their corresponding character and player from the known roster (e.g. "Balasar (Eric)").
+     * If an unrecognized voice speaks, classify as "Guest Player", "NPC", or "Out-of-Character Table".
+     * Create or update an acoustic voice profile for each detected speaker explaining how you identified them.
+${isMultiChunk ? "     * Maintain strict voice identity continuity with earlier parts of the session." : ""}
+
+2. FULL VERBATIM TRANSCRIPT:
+   - Provide a complete, chronological transcript of everything spoken in this audio segment.
+   - Format every line with absolute session timestamps and clear speaker attribution:
+     ${isMultiChunk ? `[HH:MM:SS] [Speaker Name (Role)]: Exact dialogue spoken (starting from ${startOffsetStr})` : `[MM:SS] [Speaker Name (Role)]: Exact dialogue spoken`}
+   - Distinguish when someone is speaking In-Character (IC) versus Out-of-Character (OOC). Example:
+     [${isMultiChunk ? startOffsetStr : "00:12"}] [${cleanDm}]: "The iron portcullis slams shut behind you with a deafening reverberation."
+     [${isMultiChunk ? `${String(startHour).padStart(2, "0")}:${String(startMin).padStart(2, "0")}:19` : "00:19"}] [Balasar (Eric)]: "I raise my shield! What do the runes on the archway depict?"
+     [${isMultiChunk ? `${String(startHour).padStart(2, "0")}:${String(startMin).padStart(2, "0")}:26` : "00:26"}] [Player (Eric) - OOC]: "Hey guys, remember I still have inspiration from last session."
+
+3. IN-GAME KEY MOMENTS (IN-CHARACTER):
+   - Extract 3 to 6 major narrative events, combat actions, roleplay decisions, spellcasting, lore discoveries, skill checks, or loot acquisitions in this segment.
+   - For each moment, provide:
+     * category: "plot" | "combat" | "roleplay" | "loot" | "exploration"
+     * title: punchy thematic title
+     * description: comprehensive breakdown of what transpired
+     * speakersInvolved: list of character/speaker names
+     * timestamp: absolute session timestamp (e.g. ${isMultiChunk ? startOffsetStr : "00:15"})
+
+4. OUT-OF-CHARACTER (OOC) KEY MOMENTS:
+   - Extract 2 to 5 memorable table moments outside the fictional universe:
+     * category: "rules" | "banter" | "strategy" | "logistics"
+     * title: short description
+     * description: rules debated or clarified, hilarious player jokes, tactical meta-discussion, or table decisions
+     * speakersInvolved: list of players or DM
+     * timestamp: absolute session timestamp
+
+5. CHUNK RUNNING NARRATIVE RECAP:
+   - A brief 2-3 sentence summary of story progression in this segment to pass to the next chunk.
+
+Return your response strictly as valid JSON adhering to this exact schema:
+{
+  "speakers": [
+    {
+      "id": "speaker_dm",
+      "label": "${cleanDm}",
+      "role": "DM",
+      "voiceCharacteristics": "Deep narrative cadence, describes environment and voices adversaries"
+    },
+    {
+      "id": "speaker_hero_1",
+      "label": "Balasar (Player: Eric)",
+      "role": "Player",
+      "characterName": "Balasar",
+      "playerName": "Eric",
+      "voiceCharacteristics": "Direct, confident vocal delivery, asks for combat actions"
+    }
+  ],
+  "inGameMoments": [
+    {
+      "category": "combat",
+      "title": "Breach at the Iron Portcullis",
+      "description": "Party triggered a mechanical trap; hostile sentinels emerged.",
+      "speakersInvolved": ["${cleanDm}", "Balasar (Player: Eric)"],
+      "timestamp": "${isMultiChunk ? startOffsetStr : "00:15"}"
+    }
+  ],
+  "outOfCharacterMoments": [
+    {
+      "category": "rules",
+      "title": "Inspiration Die Clarification",
+      "description": "Clarified bonus die rules before rolling saving throws against the falling gate.",
+      "speakersInvolved": ["${cleanDm}", "Balasar (Player: Eric)"],
+      "timestamp": "${isMultiChunk ? startOffsetStr : "00:27"}"
+    }
+  ],
+  "transcript": "[${isMultiChunk ? startOffsetStr : "00:00"}] [${cleanDm}]: ...\\n",
+  "chunkNarrativeSummary": "The party navigated through the lower catacombs and discovered the sealed gate.",
+  "overallAudioNotesMarkdown": "### 🎙️ Audio Session Key Findings\\n..."
+}
+`;
+
+    const audioPart = {
+      inlineData: {
+        data: audioData,
+        mimeType: mimeType || "audio/webm",
+      },
+    };
+
+    const response = await generateContentWithRetry({
+      model: "gemini-3.8-flash",
+      contents: {
+        parts: [
+          audioPart,
+          { text: prompt },
+        ],
+      },
+      config: {
+        responseMimeType: "application/json",
+      },
+    });
+
+    const rawText = response.text || "{}";
+    let parsed: any = {};
+    try {
+      parsed = JSON.parse(extractJsonText(rawText));
+    } catch (_parseErr) {
+      console.warn("JSON parse fallback for audio processing, cleaning text...");
+      parsed = {
+        transcript: rawText,
+        speakers: [
+          { id: "spk_dm", label: cleanDm, role: "DM", voiceCharacteristics: "Primary session speaker" },
+        ],
+        inGameMoments: [
+          { category: "plot", title: "Key Session Dialogue", description: "Audio processed into transcript.", speakersInvolved: [cleanDm] },
+        ],
+        outOfCharacterMoments: [
+          { category: "banter", title: "Table Conversations", description: "Audio record captured.", speakersInvolved: [cleanDm] },
+        ],
+        overallAudioNotesMarkdown: rawText,
+      };
+    }
+
+    // Ensure standard fallbacks if any fields were omitted
+    if (!parsed.transcript) {
+      parsed.transcript = rawText;
+    }
+    if (!Array.isArray(parsed.speakers) || parsed.speakers.length === 0) {
+      parsed.speakers = [
+        { id: "dm", label: cleanDm, role: "DM", voiceCharacteristics: "Authoritative storyteller voice" },
+      ];
+    }
+    if (!Array.isArray(parsed.inGameMoments)) {
+      parsed.inGameMoments = [];
+    }
+    if (!Array.isArray(parsed.outOfCharacterMoments)) {
+      parsed.outOfCharacterMoments = [];
+    }
+
+    res.json(parsed);
+  } catch (error: any) {
+    console.error("Audio processing error:", error);
+    res.status(400).json({ error: error.message || "Failed to analyze and transcribe session audio." });
+  }
+});
+
+// 1.6 Google Drive Byte-Range Audio Stream Proxy (for large files up to 6 hours)
+app.post("/api/drive/audio-chunk-proxy", async (req, res) => {
+  try {
+    const { fileId, startByte, endByte, mimeType } = req.body;
+    const authHeader = req.headers.authorization;
+
+    if (!fileId) {
+      res.status(400).json({ error: "Missing Google Drive fileId." });
+      return;
+    }
+    if (!authHeader) {
+      res.status(401).json({ error: "Missing Google Drive Authorization header." });
+      return;
+    }
+
+    const driveUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+    const fetchHeaders: Record<string, string> = {
+      Authorization: authHeader,
+    };
+
+    if (startByte !== undefined && endByte !== undefined) {
+      fetchHeaders["Range"] = `bytes=${startByte}-${endByte}`;
+    }
+
+    const driveRes = await fetch(driveUrl, { headers: fetchHeaders });
+
+    if (!driveRes.ok && driveRes.status !== 206) {
+      const errText = await driveRes.text().catch(() => "");
+      res.status(driveRes.status).json({
+        error: `Google Drive API error (${driveRes.status}): ${errText || driveRes.statusText}`,
+      });
+      return;
+    }
+
+    const arrayBuffer = await driveRes.arrayBuffer();
+    const base64Data = Buffer.from(arrayBuffer).toString("base64");
+    const resolvedMime = mimeType || driveRes.headers.get("content-type") || "audio/mpeg";
+
+    res.json({
+      base64Data,
+      mimeType: resolvedMime,
+      byteLength: arrayBuffer.byteLength,
+      contentRange: driveRes.headers.get("content-range") || undefined,
+    });
+  } catch (error: any) {
+    console.error("Drive audio proxy error:", error);
+    res.status(500).json({ error: error.message || "Failed to fetch audio chunk from Google Drive." });
+  }
+});
+
+// 2. Automated AI Session Summarizer (Integrates DM Notes, Player Journal Notes, and Audio Notes)
 app.post("/api/generate-summary", async (req, res) => {
   try {
-    const { title, date, notes, playerNotes, audioTranscription } = req.body;
-    if (!notes && !playerNotes && !audioTranscription) {
-      res.status(400).json({ error: "Please provide notes, player notes, or an audio transcription to summarize." });
+    const { title, date, notes, playerNotes, audioTranscription, audioSessionNotes } = req.body;
+    if (!notes && !playerNotes && !audioTranscription && !audioSessionNotes) {
+      res.status(400).json({ error: "Please provide notes, player notes, or audio notes to summarize." });
       return;
+    }
+
+    // Prepare audio notes representation if structured audioSessionNotes exists
+    let formattedAudioSection = audioTranscription || "No audio transcription provided.";
+    if (audioSessionNotes && typeof audioSessionNotes === "object") {
+      const spkText = Array.isArray(audioSessionNotes.speakers)
+        ? audioSessionNotes.speakers.map((s: any) => `  * ${s.label} (${s.role}): ${s.voiceCharacteristics || 'Matched voice'}`).join("\n")
+        : "None listed";
+      const igText = Array.isArray(audioSessionNotes.inGameMoments)
+        ? audioSessionNotes.inGameMoments.map((m: any) => `  * [${m.category?.toUpperCase()}] ${m.title} (${m.timestamp || 'In-game'}): ${m.description} [Involved: ${(m.speakersInvolved || []).join(', ')}]`).join("\n")
+        : "None listed";
+      const oocText = Array.isArray(audioSessionNotes.outOfCharacterMoments)
+        ? audioSessionNotes.outOfCharacterMoments.map((m: any) => `  * [${m.category?.toUpperCase()}] ${m.title} (${m.timestamp || 'Table'}): ${m.description} [Involved: ${(m.speakersInvolved || []).join(', ')}]`).join("\n")
+        : "None listed";
+
+      formattedAudioSection = `
+--- VERIFIED RECORDED AUDIO GROUND TRUTH ---
+DETECTED SPEAKERS & VOICES:
+${spkText}
+
+AUDIO IN-GAME KEY MOMENTS:
+${igText}
+
+AUDIO OUT-OF-CHARACTER (OOC) TABLE MOMENTS:
+${oocText}
+
+AUDIO FULL TRANSCRIPT (SAMPLE / EXCERPT):
+${(audioSessionNotes.transcript || audioTranscription || "").substring(0, 4000)}
+`;
     }
 
     const campaignContext = `
 Campaign Session: ${title || "Untitled Session"}
 Session Date: ${date || "N/A"}
 
---- DM SCRIBE NOTES (OFFICIAL DM LOGS) ---
+--- 📜 SOURCE 1: DM SCRIBE NOTES (OFFICIAL DUNGEON MASTER LOGS) ---
 ${notes || "No DM scribe notes provided."}
 
---- PLAYER JOURNAL NOTES (PLAYER STASH / DIARY) ---
+--- 👥 SOURCE 2: PLAYER JOURNAL NOTES (PLAYER STASH, DIARY & THEORIES) ---
 ${playerNotes || "No player journal notes provided."}
 
---- AUDIO TRANSCRIPTION/LOGS ---
-${audioTranscription || "No audio transcription provided."}
+--- 🎙️ SOURCE 3: AUDIO SESSION NOTES & TRANSCRIPT (RECORDED SPOKEN AUDIO) ---
+${formattedAudioSection}
 `;
 
     const prompt = `
-You are a highly acclaimed, creative Dungeon Master Companion. Analyze the following campaign logs, session notes, player journals, and audio transcriptions, then synthesize them into a magnificent, organized, and deeply practical Session Chronicle.
+You are a highly acclaimed, creative Dungeon Master Companion and master chronicler.
+Your task is to integrate ALL THREE distinct sources into a single, unified, cohesive Master Session Chronicle:
+1. [DM SCRIBE NOTES]: Official Dungeon Master world narrative and story directives.
+2. [PLAYER JOURNAL NOTES]: The party's personal diary, player theories, and inventory notes.
+3. [AUDIO SESSION NOTES & TRANSCRIPT]: Spoken dialogue with matched voices (DM vs individual characters/players), verified quotes, in-game actions, and out-of-character (OOC) table dynamics.
+
+INTEGRATION GUIDELINES:
+- Seamlessly synthesize the narrative flow by honoring the DM's authority while weaving in the players' personal reactions, specific words spoken in character, and real audio occurrences.
+- Highlight specific character moments and dialogues from the audio transcript so it is clear who said or accomplished what.
+- Include a dedicated section for "Out-of-Character Table Highlights" capturing memorable banter, rule adjudications, and player strategy revealed in the audio.
+- Cross-reference facts across all three sources.
 
 CRITICAL RULE FOR CANON CONFLICTS / DISCREPANCIES:
-1. Carefully compare [DM SCRIBE NOTES] against [PLAYER JOURNAL NOTES].
-2. Trust [DM SCRIBE NOTES] over [PLAYER JOURNAL NOTES] by default for all summaries and facts.
+1. Carefully compare [DM SCRIBE NOTES], [PLAYER JOURNAL NOTES], and [AUDIO SESSION NOTES].
+2. Trust [DM SCRIBE NOTES] over [PLAYER JOURNAL NOTES] by default for lore/world facts, but consult the [AUDIO SESSION NOTES] to verify what actually happened at the table.
 3. If you detect ANY conflicting or differing details between DM Scribe Notes and Player Journal Notes (e.g. conflicting loot/gold amounts, magic item details, NPC fates/outcomes, battle casualties, or quest decisions):
    - You MUST add a prominent first section at the very top of your summary:
 
@@ -246,29 +546,33 @@ CRITICAL RULE FOR CANON CONFLICTS / DISCREPANCIES:
   * **Conflict Topic**: (e.g. "Gold Bounty Amount" or "Fate of Goblin Chief")
   * **DM Scribe Log Record**: (What the DM notes say)
   * **Player Journal Record**: (What the Player notes say)
+  * **Audio Ground Truth**: (What the audio recording/transcript shows, if mentioned)
   * **Default Assumption**: "Defaulting to DM Scribe Log."
   * **DM Decision Prompt**: Ask the Dungeon Master explicitly: *"Which version should be established as canonical going forward? Click 'Establish Canonical Truth' below to append your ruling permanently to this session."*
 
 Compile the rest of your response utilizing beautiful clean Markdown formatting with the following exact structural sections:
 
 # 📜 SESSION TITLE & CHRONICLE OVERVIEW
-*Create an immersive, themed, evocative title for this chapter of the chronicle, followed by a theatrical 2-3 paragraph atmospheric overview of the session's overall progress and major themes.*
+*Create an evocative, atmospheric title for this chapter, followed by a theatrical 2-3 paragraph narrative overview integrating DM intentions, player journeys, and spoken table drama.*
 
-# ⚔️ CAMPAIGN KEY HIGHLIGHTS
-*Detail the 3-5 most critical events, conflicts, combat results, puzzles solved, or legendary feats in highly engaging bullet points.*
+# ⚔️ CAMPAIGN KEY HIGHLIGHTS & IN-GAME MOMENTS
+*Detail the 3-5 most critical events, combat maneuvers, puzzle breakthroughs, or character milestones in engaging bullet points, clearly citing which characters took action.*
 
-# 👥 KEY CHARACTERS & DEAR NPCs
-*Inventory the active party members, key allies, villains, or shopkeepers encountered during this session, summarizing their disposition, objectives, or items acquired.*
+# 👥 KEY CHARACTERS, DIALOGUE & DEAR NPCs
+*Inventory active party members and key NPCs encountered. Include memorable quotes or verbal exchanges verified from the audio transcript.*
+
+# 🎲 OUT-OF-CHARACTER TABLE HIGHLIGHTS
+*Summarize key out-of-character moments captured in the session: memorable player banter, rules questions adjudicated by the DM, clutch dice rolls, and tactical group strategy.*
 
 # 🗝️ THREADS, SECRETS & CLUES
 *Detail any mysteries proposed, map-clues discovered, unresolved plot hooks, or side-quest prompts that the DM can leverage in future sessions.*
 
-# 🎒 LOOT & DICE TALES
-*Summarize any significant gold, magic items, weapons, or key rewards claimed, along with any memorable natural 20s, critical failures, or legendary battle statistics.*
+# 🎒 LOOT, REWARDS & STATS
+*Summarize any gold, magic items, spell scrolls, or key rewards claimed, along with notable skill check outcomes.*
 `;
 
     const response = await generateContentWithRetry({
-      model: "gemini-3.6-flash",
+      model: "gemini-3.8-flash",
       contents: [
         { text: campaignContext },
         { text: prompt }
