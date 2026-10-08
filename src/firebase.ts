@@ -75,10 +75,12 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 let cachedAccessToken: string | null = null;
 let isSigningIn = false;
 
-// Create configured GoogleAuthProvider with Drive Readonly scope
+// Create configured GoogleAuthProvider with Drive scopes: read (import recordings) and per-file write
+// (back up session audio and transcripts the app creates; drive.file can't see other files).
 export function getGoogleDriveAuthProvider(): GoogleAuthProvider {
   const provider = new GoogleAuthProvider();
   provider.addScope("https://www.googleapis.com/auth/drive.readonly");
+  provider.addScope("https://www.googleapis.com/auth/drive.file");
   return provider;
 }
 

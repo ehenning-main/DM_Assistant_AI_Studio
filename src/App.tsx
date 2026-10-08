@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   BookOpen,
   Sword,
@@ -27,10 +27,11 @@ import {
   ArrowUpDown,
   Search,
   Mic,
+  AudioLines,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
-import { Session, Campaign, HighlightItem, CharacterItem, AudioSessionAnalysis } from "./types";
+import { Session, Campaign, HighlightItem, CharacterItem, AudioSessionAnalysis, SessionCapture, CampaignPlayer } from "./types";
 import { isRealFirebase, auth, logInWithGoogle, logOutUser } from "./firebase";
 import {
   fetchAllCampaigns,
@@ -53,6 +54,15 @@ import { MediaForgeWizard } from "./components/MediaForgeWizard";
 import { HeroPartyTracker } from "./components/HeroPartyTracker";
 import { ChronicleSummarySection } from "./components/ChronicleSummarySection";
 import { CampaignSearchConsole } from "./components/CampaignSearchConsole";
+import { SessionCaptureHub } from "./components/capture/SessionCaptureHub";
+import { WizardDetails } from "./components/capture/NewCaptureWizard";
+import { CaptureContext, hydrateCaptureLines, watchBot } from "./services/capturePipeline";
+import { estimateLinesBytes, formatTranscriptText, toAudioSessionAnalysis } from "./services/transcriptFormat";
+import { saveLocalTranscript } from "./services/localAudioStore";
+
+// Transcript lines above this size are kept on-device only, so the cloud session document (which also
+// carries the formatted transcript text) stays well under Firestore's 1 MiB document limit.
+const MAX_CLOUD_TRANSCRIPT_BYTES = 300_000;
 
 export default function App() {
   // Authentication & Isomorphic engine states
@@ -98,7 +108,7 @@ export default function App() {
   const [audioSessionNotes, setAudioSessionNotes] = useState<AudioSessionAnalysis | undefined>(undefined);
   const [notesSaving, setNotesSaving] = useState(false);
   const [activeNoteTab, setActiveNoteTab] = useState<"dm" | "player" | "audio">("dm");
-  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"chapters" | "party">("chapters");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"chapters" | "party" | "capture">("chapters");
   const [isLoreExpanded, setIsLoreExpanded] = useState(false);
   const [sessionSortMode, setSessionSortMode] = useState<"date-desc" | "date-asc" | "name-asc" | "name-desc" | "manual">(() => {
     return (localStorage.getItem("session_sort_mode") as any) || "date-desc";
@@ -157,6 +167,119 @@ export default function App() {
       setSelectedSession(null);
     }
   }, [activeUserId]);
+
+  // --- Session capture -------------------------------------------------------------------------------------
+  // Capture jobs run in the background and outlive views, so they read and write through refs that always
+  // hold the latest sessions/campaigns instead of render-time closures.
+  const sessionsRef = useRef<Session[]>(sessions);
+  sessionsRef.current = sessions;
+  const campaignsRef = useRef<Campaign[]>(campaigns);
+  campaignsRef.current = campaigns;
+  const selectedSessionIdRef = useRef<string | null>(null);
+  selectedSessionIdRef.current = selectedSession?.id ?? null;
+
+  async function saveSessionCapture(sessionId: string, captureInput: SessionCapture) {
+    const capture = await hydrateCaptureLines(sessionId, captureInput);
+    const current = sessionsRef.current.find((s) => s.id === sessionId);
+    if (!current) return;
+    const campaign = campaignsRef.current.find((c) => c.id === current.campaignId);
+    const players = campaign?.players || [];
+
+    let stored: SessionCapture = capture;
+    if (estimateLinesBytes(capture.lines) > MAX_CLOUD_TRANSCRIPT_BYTES) {
+      await saveLocalTranscript(sessionId, capture.lines);
+      stored = { ...capture, linesStoredLocally: true };
+    }
+
+    const transcriptReady = capture.status === "complete" || capture.status === "needs_tagging";
+    const extra: Partial<Session> = transcriptReady && capture.lines.length > 0
+      ? {
+          audioTranscription: formatTranscriptText(capture, players),
+          audioSessionNotes: { ...toAudioSessionAnalysis(capture, players), transcript: "" },
+        }
+      : {};
+
+    // In-memory state keeps the full lines; storage drops them from the cloud copy when they live on-device.
+    const inMemory: Session = { ...current, ...extra, capture: stored, updatedAt: new Date().toISOString() };
+
+    sessionsRef.current = sessionsRef.current.map((s) => (s.id === sessionId ? inMemory : s));
+    setSessions((prev) => prev.map((s) => (s.id === sessionId ? inMemory : s)));
+    if (selectedSessionIdRef.current === sessionId) {
+      setSelectedSession(inMemory);
+      if (extra.audioTranscription !== undefined) {
+        setAudioTranscription(extra.audioTranscription);
+        setAudioSessionNotes(extra.audioSessionNotes);
+      }
+    }
+    await updateExistingSession(inMemory);
+  }
+
+  const captureCtx: CaptureContext = {
+    getSession: (id) => sessionsRef.current.find((s) => s.id === id),
+    getCampaign: (id) => campaignsRef.current.find((c) => c.id === id),
+    saveCapture: saveSessionCapture,
+  };
+
+  async function createCaptureSession(details: WizardDetails, capture: SessionCapture): Promise<Session> {
+    const campSessions = sessionsRef.current.filter((s) => s.campaignId === selectedCampaignId);
+    const maxOrder = campSessions.reduce((max, s) => Math.max(max, s.order ?? 0), -1);
+    const now = new Date().toISOString();
+    const session: Session = {
+      id: details.sessionId || "session-" + Date.now(),
+      userId: activeUserId,
+      campaignId: selectedCampaignId,
+      title: details.title,
+      date: details.date,
+      notes: "## 📒 DM RAW LOGS\n\n",
+      playerNotes: "## 👥 PLAYER JOURNAL\n\n",
+      highlights: [],
+      characters: [],
+      videoStatus: "idle",
+      capture,
+      createdAt: now,
+      updatedAt: now,
+      order: maxOrder + 1,
+    };
+    await createNewSession(session);
+    sessionsRef.current = [session, ...sessionsRef.current];
+    setSessions((prev) => [session, ...prev]);
+    return session;
+  }
+
+  async function updateCampaignPlayers(players: CampaignPlayer[]) {
+    const campaign = campaignsRef.current.find((c) => c.id === selectedCampaignId);
+    if (!campaign) return;
+    const updated: Campaign = { ...campaign, players };
+    campaignsRef.current = campaignsRef.current.map((c) => (c.id === updated.id ? updated : c));
+    setCampaigns((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+    await updateExistingCampaign(updated);
+  }
+
+  function openSessionInChronicle(sessionId: string) {
+    const match = sessionsRef.current.find((s) => s.id === sessionId);
+    if (!match) return;
+    setSelectedSession(match);
+    setSessionTitle(match.title);
+    setSessionDate(match.date);
+    setNotes(match.notes);
+    setPlayerNotes(match.playerNotes || "");
+    setAudioTranscription(match.audioTranscription || "");
+    setAudioSessionNotes(match.audioSessionNotes);
+    setActiveNoteTab("audio");
+    setActiveWorkspaceTab("chapters");
+  }
+
+  // Meeting bots finish on their own schedule (kicked, or everyone left). Watch them app-wide so processing
+  // starts automatically even if the GM isn't looking at the capture tab.
+  const botSessionKey = sessions
+    .filter((s) => s.capture?.bot && ["bot_joining", "bot_recording", "bot_finalizing"].includes(s.capture.status))
+    .map((s) => s.id)
+    .join(",");
+  useEffect(() => {
+    if (!botSessionKey) return;
+    const stops = botSessionKey.split(",").map((id) => watchBot(captureCtx, id));
+    return () => stops.forEach((stop) => stop());
+  }, [botSessionKey]);
 
   async function loadCampaignsAndSessions(targetCampaignId?: string, targetSessionId?: string) {
     if (!activeUserId) return;
@@ -1254,7 +1377,7 @@ export default function App() {
 
           {/* Active Campaign Workspace Tabs Toggle Row */}
           {selectedCampaignId && (
-            <div className="flex border-b border-zinc-850 gap-1.5" id="campaign-workspace-tabstrip">
+            <div className="flex border-b border-zinc-850 gap-1.5 overflow-x-auto" id="campaign-workspace-tabstrip">
               <button
                 onClick={() => setActiveWorkspaceTab("chapters")}
                 className={`px-4 py-2.5 border-b-2 font-fantasy tracking-wider uppercase text-xs transition duration-150 flex items-center gap-2 cursor-pointer font-bold ${
@@ -1275,6 +1398,17 @@ export default function App() {
               >
                 <Users className="w-3.5 h-3.5" /> 🛡️ Heroes of the Realm
               </button>
+              <button
+                onClick={() => setActiveWorkspaceTab("capture")}
+                className={`px-4 py-2.5 border-b-2 font-fantasy tracking-wider uppercase text-xs transition duration-150 flex items-center gap-2 cursor-pointer font-bold ${
+                  activeWorkspaceTab === "capture"
+                    ? "border-red-500 text-red-500 font-bold bg-zinc-900/40"
+                    : "border-transparent text-zinc-550 hover:text-zinc-300"
+                }`}
+                id="tab-session-capture"
+              >
+                <AudioLines className="w-3.5 h-3.5" /> 🎙️ Capture
+              </button>
             </div>
           )}
 
@@ -1289,6 +1423,15 @@ export default function App() {
                   console.error("Failed to update campaign heroes:", e);
                 }
               }}
+            />
+          ) : selectedCampaignId && activeWorkspaceTab === "capture" ? (
+            <SessionCaptureHub
+              campaign={campaigns.find((c) => c.id === selectedCampaignId)!}
+              sessions={sessions.filter((s) => s.campaignId === selectedCampaignId)}
+              ctx={captureCtx}
+              createSession={createCaptureSession}
+              onUpdatePlayers={updateCampaignPlayers}
+              onOpenInChronicle={openSessionInChronicle}
             />
           ) : (
             <AnimatePresence mode="wait">

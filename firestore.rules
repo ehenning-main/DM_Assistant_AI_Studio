@@ -51,7 +51,7 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && isValidCampaign(incoming())
         && (
-          incoming().diff(resource.data).affectedKeys().hasAny(['name', 'setting', 'description', 'updatedAt', 'heroes'])
+          incoming().diff(resource.data).affectedKeys().hasAny(['name', 'setting', 'description', 'updatedAt', 'heroes', 'players'])
         );
         
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
@@ -76,7 +76,7 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && isValidSession(incoming())
         && (
-          incoming().diff(resource.data).affectedKeys().hasAny(['title', 'date', 'notes', 'playerNotes', 'audioUrl', 'audioTranscription', 'audioSessionNotes', 'summary', 'videoUrl', 'videoOperationName', 'videoStatus', 'highlights', 'characters', 'campaignId', 'updatedAt'])
+          incoming().diff(resource.data).affectedKeys().hasAny(['title', 'date', 'notes', 'playerNotes', 'audioUrl', 'audioTranscription', 'audioSessionNotes', 'summary', 'videoUrl', 'videoOperationName', 'videoStatus', 'highlights', 'characters', 'campaignId', 'capture', 'updatedAt'])
         );
         
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
