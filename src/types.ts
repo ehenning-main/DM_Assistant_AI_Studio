@@ -33,8 +33,119 @@ export interface Campaign {
   heroes?: HeroCharacter[];
   dndBeyondUrl?: string;
   dndBeyondNotes?: string;
+  players?: CampaignPlayer[];
   createdAt: any;
   updatedAt: any;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Session capture (live table mic, online meeting bot, file upload) and speaker-identified transcripts.
+
+export type TablePlayerRole = "GM" | "Player";
+
+/** A real person at the table. Linked to a hero so transcripts can say "Sarah (Elara)". */
+export interface CampaignPlayer {
+  id: string;
+  name: string;
+  role: TablePlayerRole;
+  heroId?: string;
+  characterName?: string;
+  /** Voice enrollment for live sessions. The audio itself lives on this device (IndexedDB). */
+  enrollment?: {
+    clipId: string;
+    recordedAt: string;
+    durationSec: number;
+  };
+  /** What we've learned from GMs tagging anonymous transcripts; used to suggest assignments next time. */
+  learnedVoice?: {
+    description?: string;
+    sampleLines: string[];
+    clipId?: string;
+    confirmations: number;
+    updatedAt: string;
+    meetingDisplayName?: string;
+  };
+}
+
+export type CaptureMethod = "live" | "online" | "upload";
+export type DiarizationMode = "enrolled" | "anonymous";
+
+export type CaptureStatus =
+  | "recording"
+  | "bot_joining"
+  | "bot_recording"
+  | "bot_finalizing"
+  | "uploading"
+  | "transcribing"
+  | "needs_tagging"
+  | "complete"
+  | "error";
+
+/** One speaker label in a transcript. `key` is a player id (enrolled) or "S1"/"U1" (anonymous/unknown). */
+export interface CaptureSpeaker {
+  key: string;
+  playerId?: string | null;
+  voiceDescription?: string;
+  suggestedPlayerId?: string | null;
+  suggestionConfidence?: number;
+  suggestionReason?: string;
+  /** Absolute session time (seconds) of a clean sample of this voice, for playback and reference clips. */
+  sampleStartSec?: number;
+  sampleDurationSec?: number;
+}
+
+/**
+ * One utterance, with short keys to keep long sessions small: t = start (seconds into the session),
+ * s = speaker key, x = text, o = out-of-character table talk. (Objects, not tuples: Firestore rejects nested arrays.)
+ */
+export interface TranscriptLine {
+  t: number;
+  s: string;
+  x: string;
+  o?: boolean;
+}
+
+export interface CaptureBotInfo {
+  provider: "recall";
+  botId: string;
+  meetingUrl: string;
+  platform: "google_meet" | "zoom";
+  phase?: string;
+  providerStatus?: string;
+  endReason?: string;
+  participants?: string[];
+}
+
+export interface CloudBackupRecord {
+  provider: "google_drive" | "dropbox";
+  kind: "audio" | "transcript";
+  location: string;
+  at: string;
+}
+
+export interface SessionCapture {
+  method: CaptureMethod;
+  diarization: DiarizationMode;
+  status: CaptureStatus;
+  startedAt: string;
+  /** On-device recording (IndexedDB key) for live sessions and uploads, if kept. */
+  recordingId?: string;
+  recordingFileName?: string;
+  recordingMimeType?: string;
+  recordingBytes?: number;
+  durationSec?: number;
+  bot?: CaptureBotInfo;
+  /** Server-side normalization job; segments are cached on-device once fetched. */
+  jobId?: string;
+  segmentCount?: number;
+  segmentsDone?: number;
+  speakers: CaptureSpeaker[];
+  lines: TranscriptLine[];
+  /** True when the transcript was too large for the cloud document and lives only on this device. */
+  linesStoredLocally?: boolean;
+  error?: string;
+  processedAt?: string;
+  backups?: CloudBackupRecord[];
 }
 
 export interface HeroProgressionRecord {
@@ -195,6 +306,7 @@ export interface Session {
   audioUrl?: string;
   audioTranscription?: string;
   audioSessionNotes?: AudioSessionAnalysis;
+  capture?: SessionCapture;
   summary?: string;
   videoUrl?: string;
   videoOperationName?: string;
