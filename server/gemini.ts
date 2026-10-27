@@ -42,10 +42,10 @@ export async function generateContentWithRetry(params: { model: string; contents
                           error.status === 429;
       
       if (isTransient && attempt <= retries) {
-        if ((currentModel === "gemini-3.6-flash" || currentModel === "gemini-3.5-flash") && attempt === 2) {
-          currentModel = "gemini-2.5-flash";
+        if (attempt === 2) {
+          currentModel = "gemini-3.1-flash-lite";
         } else if (attempt >= 3) {
-          currentModel = "gemini-1.5-flash";
+          currentModel = "gemini-flash-latest";
         }
         
         await new Promise((resolve) => setTimeout(resolve, delayMs));

@@ -28,6 +28,9 @@ import {
   Search,
   Mic,
   AudioLines,
+  Archive,
+  Download,
+  Upload,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -54,6 +57,7 @@ import { MediaForgeWizard } from "./components/MediaForgeWizard";
 import { HeroPartyTracker } from "./components/HeroPartyTracker";
 import { ChronicleSummarySection } from "./components/ChronicleSummarySection";
 import { CampaignSearchConsole } from "./components/CampaignSearchConsole";
+import { CampaignArchiveModal } from "./components/CampaignArchiveModal";
 import { SessionCaptureHub } from "./components/capture/SessionCaptureHub";
 import { WizardDetails } from "./components/capture/NewCaptureWizard";
 import { CaptureContext, hydrateCaptureLines, watchBot } from "./services/capturePipeline";
@@ -93,6 +97,10 @@ export default function App() {
   // UI-based Delete Confirmation states
   const [campaignToDelete, setCampaignToDelete] = useState<Campaign | null>(null);
   const [sessionToDelete, setSessionToDelete] = useState<Session | null>(null);
+
+  // Campaign Archive (JSON Export & Import) modal states
+  const [showCampaignArchiveModal, setShowCampaignArchiveModal] = useState(false);
+  const [campaignArchiveModalTab, setCampaignArchiveModalTab] = useState<"export" | "import">("export");
 
   // Campaign session collections
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -435,6 +443,32 @@ export default function App() {
       );
     } catch (e) {
       console.error("Failed to persist manual session order:", e);
+    }
+  }
+
+  // Handle restoring / importing campaign from JSON archive
+  async function handleCampaignArchiveImportSuccess(importedCampaignId: string) {
+    if (!activeUserId) return;
+    try {
+      setCampaignsLoading(true);
+      const updatedCampaigns = await fetchAllCampaigns(activeUserId);
+      setCampaigns(updatedCampaigns);
+      setSelectedCampaignId(importedCampaignId);
+
+      setSessionsLoading(true);
+      const updatedSessions = await fetchAllSessions(importedCampaignId);
+      setSessions(updatedSessions);
+      if (updatedSessions.length > 0) {
+        setSelectedSession(updatedSessions[0]);
+      } else {
+        setSelectedSession(null);
+      }
+    } catch (err: any) {
+      console.error("Archive reload error:", err);
+      alert(`Could not reload imported realm: ${err.message}`);
+    } finally {
+      setCampaignsLoading(false);
+      setSessionsLoading(false);
     }
   }
 
@@ -950,6 +984,18 @@ export default function App() {
                   <span className="hidden md:inline">Edit Realm</span>
                 </button>
                 <button
+                  onClick={() => {
+                    setCampaignArchiveModalTab("export");
+                    setShowCampaignArchiveModal(true);
+                  }}
+                  className="px-3 py-1.5 bg-zinc-950/80 hover:bg-zinc-900 hover:text-red-400 text-zinc-400 border border-zinc-850 hover:border-zinc-700 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                  title="Export Entire Campaign Data (JSON) for offline archival"
+                  id="btn-sidebar-archive-export"
+                >
+                  <Archive className="w-3.5 h-3.5 text-red-400" />
+                  <span className="hidden md:inline">Archive &amp; Export</span>
+                </button>
+                <button
                   onClick={() => handleDeleteCampaign(activeCamp.id)}
                   className="px-3 py-1.5 bg-zinc-950/80 hover:bg-red-955/20 hover:text-red-400 text-zinc-400 border border-zinc-850 hover:border-red-900/30 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
                   title="Delete Campaign Realm"
@@ -963,6 +1009,20 @@ export default function App() {
           })()}
 
           <div className="h-5 w-[1px] bg-zinc-800 mx-1.5 hidden sm:block" />
+
+          {/* Import Realm Button */}
+          <button
+            onClick={() => {
+              setCampaignArchiveModalTab("import");
+              setShowCampaignArchiveModal(true);
+            }}
+            className="px-3 py-1.5 bg-zinc-950/80 hover:bg-zinc-900 hover:text-amber-400 text-zinc-400 border border-zinc-850 hover:border-zinc-700 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+            title="Import Campaign scrolls from JSON backup"
+            id="btn-sidebar-import-archive"
+          >
+            <Upload className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">Import Realm</span>
+          </button>
 
           <button
             onClick={() => setShowCreateCampaignModal(true)}
@@ -2280,6 +2340,17 @@ export default function App() {
           </motion.div>
         </div>
       )}
+
+      {/* Campaign Archive & Portability Modal (Export & Import JSON) */}
+      <CampaignArchiveModal
+        isOpen={showCampaignArchiveModal}
+        onClose={() => setShowCampaignArchiveModal(false)}
+        activeCampaign={campaigns.find((c) => c.id === selectedCampaignId) || null}
+        allSessions={sessions}
+        activeUserId={activeUserId || "local_guest_dm"}
+        onImportSuccess={handleCampaignArchiveImportSuccess}
+        initialTab={campaignArchiveModalTab}
+      />
     </div>
   );
 }

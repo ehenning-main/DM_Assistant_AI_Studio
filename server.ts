@@ -1,8 +1,11 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
+import { exec } from "child_process";
 import dotenv from "dotenv";
 import { GenerateVideosOperation, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
+import { YoutubeTranscript } from "youtube-transcript";
 import { getAi, generateContentWithRetry, extractJsonText } from "./server/gemini";
 import { captureRouter } from "./server/captureRoutes";
 
@@ -144,6 +147,250 @@ app.post("/api/transcribe-audio", async (req, res) => {
   }
 });
 
+// Helper to locate and ensure yt-dlp binary is executable
+function findYtDlpBinary(): string {
+  const tmpPath = "/tmp/yt-dlp";
+  const localBin = path.resolve("./bin/yt-dlp");
+
+  // In container environments (e.g. Cloud Run), copying to /tmp guarantees execution rights
+  if (fs.existsSync(localBin)) {
+    try {
+      fs.chmodSync(localBin, 0o755);
+    } catch (_e) {}
+
+    try {
+      if (!fs.existsSync(tmpPath) || fs.statSync(tmpPath).size !== fs.statSync(localBin).size) {
+        fs.copyFileSync(localBin, tmpPath);
+      }
+      fs.chmodSync(tmpPath, 0o755);
+      return tmpPath;
+    } catch (_e) {
+      return localBin;
+    }
+  }
+
+  if (fs.existsSync(tmpPath)) {
+    try {
+      fs.chmodSync(tmpPath, 0o755);
+      return tmpPath;
+    } catch (_e) {}
+  }
+
+  return "yt-dlp";
+}
+
+// Helper to extract YouTube 11-char Video ID
+function parseYouTubeId(url: string): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  const match = trimmed.match(
+    /(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/
+  );
+  if (match) return match[1];
+  if (/^[\w-]{11}$/.test(trimmed)) return trimmed;
+  return null;
+}
+
+// 1.35 YouTube Video Metadata & Caption Probe
+app.post("/api/youtube/info", async (req, res) => {
+  try {
+    const { url } = req.body;
+    const videoId = parseYouTubeId(url);
+    if (!videoId) {
+      res.status(400).json({ error: "Invalid YouTube URL or Video ID." });
+      return;
+    }
+
+    const cleanUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    let title = "YouTube Audio Track";
+    let channel = "YouTube";
+    let thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+    let durationSeconds = 0;
+    let durationFormatted = "00:00";
+    let hasCaptions = false;
+    let captionSnippet: string | undefined;
+
+    // 1. Fetch metadata via oEmbed
+    try {
+      const oembedRes = await fetch(
+        `https://www.youtube.com/oembed?url=${encodeURIComponent(cleanUrl)}&format=json`
+      );
+      if (oembedRes.ok) {
+        const oembedData: any = await oembedRes.json();
+        if (oembedData.title) title = oembedData.title;
+        if (oembedData.author_name) channel = oembedData.author_name;
+        if (oembedData.thumbnail_url) thumbnail = oembedData.thumbnail_url;
+      }
+    } catch (_oeErr) {}
+
+    // 2. Fetch duration via yt-dlp dump-json if possible
+    try {
+      const ytDlp = findYtDlpBinary();
+      const dumpCmd = `${ytDlp} --dump-json --no-warnings --extractor-args "youtube:player_client=android" "${cleanUrl}"`;
+      const dumpOutput = await new Promise<string>((resolve, reject) => {
+        exec(dumpCmd, { timeout: 15000 }, (err, stdout) => {
+          if (err) reject(err);
+          else resolve(stdout);
+        });
+      });
+      const dumpJson = JSON.parse(dumpOutput);
+      if (dumpJson.duration) {
+        durationSeconds = Math.round(dumpJson.duration);
+        const mins = Math.floor(durationSeconds / 60);
+        const secs = durationSeconds % 60;
+        const hrs = Math.floor(mins / 60);
+        if (hrs > 0) {
+          durationFormatted = `${hrs}:${String(mins % 60).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+        } else {
+          durationFormatted = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+        }
+      }
+      if (dumpJson.title) title = dumpJson.title;
+      if (dumpJson.uploader) channel = dumpJson.uploader;
+    } catch (_dlpErr) {}
+
+    // 3. Check for captions via youtube-transcript
+    try {
+      const transcriptCues = await YoutubeTranscript.fetchTranscript(videoId);
+      if (Array.isArray(transcriptCues) && transcriptCues.length > 0) {
+        hasCaptions = true;
+        captionSnippet = transcriptCues
+          .slice(0, 3)
+          .map((c: any) => c.text)
+          .join(" ");
+        if (!durationSeconds && transcriptCues[transcriptCues.length - 1]?.offset) {
+          const lastCue = transcriptCues[transcriptCues.length - 1];
+          durationSeconds = Math.round((lastCue.offset + (lastCue.duration || 0)) / 1000);
+          const mins = Math.floor(durationSeconds / 60);
+          const secs = durationSeconds % 60;
+          durationFormatted = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+        }
+      }
+    } catch (_tErr) {}
+
+    res.json({
+      success: true,
+      videoId,
+      url: cleanUrl,
+      title,
+      channel,
+      thumbnail,
+      durationSeconds,
+      durationFormatted,
+      hasCaptions,
+      captionSnippet,
+      embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=0`,
+    });
+  } catch (error: any) {
+    console.error("YouTube info error:", error);
+    res.status(500).json({ error: error.message || "Failed to retrieve YouTube video details." });
+  }
+});
+
+// 1.36 YouTube Audio Extractor
+app.post("/api/youtube/extract-audio", async (req, res) => {
+  try {
+    const { url, timeRange } = req.body;
+    const videoId = parseYouTubeId(url);
+    if (!videoId) {
+      res.status(400).json({ error: "Invalid YouTube URL or Video ID." });
+      return;
+    }
+
+    const cleanUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const ytDlp = findYtDlpBinary();
+    const tempFileId = `${Date.now()}_${videoId}`;
+    const tempOutTemplate = `/tmp/yt_${tempFileId}.%(ext)s`;
+    const tempMp3Path = `/tmp/yt_${tempFileId}.mp3`;
+
+    // Download section flags if specified
+    let sectionFlag = "";
+    if (timeRange && typeof timeRange === "string" && timeRange.includes("-")) {
+      sectionFlag = `--download-sections "*${timeRange}"`;
+    }
+
+    const extractCmd = `${ytDlp} --extractor-args "youtube:player_client=android" -x --audio-format mp3 --audio-quality 5 ${sectionFlag} -o "${tempOutTemplate}" "${cleanUrl}"`;
+
+    // Run extraction
+    await new Promise<void>((resolve, reject) => {
+      exec(extractCmd, { timeout: 60000 }, (err, _stdout, stderr) => {
+        if (err) {
+          return reject(new Error(stderr || err.message));
+        }
+        resolve();
+      });
+    });
+
+    if (!fs.existsSync(tempMp3Path)) {
+      const files = fs.readdirSync("/tmp").filter((f) => f.startsWith(`yt_${tempFileId}`));
+      if (files.length === 0) {
+        throw new Error("Audio extraction did not produce an output file.");
+      }
+    }
+
+    const finalPath = fs.existsSync(tempMp3Path)
+      ? tempMp3Path
+      : path.join("/tmp", fs.readdirSync("/tmp").find((f) => f.startsWith(`yt_${tempFileId}`))!);
+
+    const stat = fs.statSync(finalPath);
+    const audioBuffer = fs.readFileSync(finalPath);
+    const base64Data = audioBuffer.toString("base64");
+
+    // Clean up temporary file
+    try {
+      fs.unlinkSync(finalPath);
+    } catch (_unlinkErr) {}
+
+    // Check for captions in parallel
+    let captions: any[] = [];
+    try {
+      const cues = await YoutubeTranscript.fetchTranscript(videoId);
+      if (Array.isArray(cues)) {
+        captions = cues;
+      }
+    } catch (_cErr) {}
+
+    // Video duration and title fallback
+    let title = "YouTube Audio Track";
+    let channel = "YouTube";
+    try {
+      const oembedRes = await fetch(
+        `https://www.youtube.com/oembed?url=${encodeURIComponent(cleanUrl)}&format=json`
+      );
+      if (oembedRes.ok) {
+        const oembedData: any = await oembedRes.json();
+        if (oembedData.title) title = oembedData.title;
+        if (oembedData.author_name) channel = oembedData.author_name;
+      }
+    } catch (_oeErr) {}
+
+    // Estimate duration from mp3 size (64kbps = ~8000 bytes per sec)
+    const estimatedDurationSeconds = Math.max(15, Math.round(stat.size / 8000));
+    const mins = Math.floor(estimatedDurationSeconds / 60);
+    const secs = estimatedDurationSeconds % 60;
+    const durationFormatted = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+
+    res.json({
+      success: true,
+      videoId,
+      title,
+      channel,
+      durationSeconds: estimatedDurationSeconds,
+      durationFormatted,
+      audioData: base64Data,
+      mimeType: "audio/mp3",
+      sizeBytes: stat.size,
+      sizeStr: `${Math.round(stat.size / 1024)} KB`,
+      captions: captions.length > 0 ? captions : undefined,
+    });
+  } catch (error: any) {
+    console.error("Audio extraction error:", error);
+    res.status(500).json({
+      error: `YouTube audio extraction failed: ${error.message || "Unable to extract audio track."}`,
+    });
+  }
+});
+
 // 1.5 Advanced Session Audio Processor: Speaker Matching, Diarization, Full Transcript, In-Game & OOC Moments
 // Supports single audio files or multi-hour chunked audio segments (up to 6 hours)
 app.post("/api/process-session-audio", async (req, res) => {
@@ -160,6 +407,8 @@ app.post("/api/process-session-audio", async (req, res) => {
       timeOffsetMinutes = 0,
       previousSpeakers = [],
       previousNarrativeContext = "",
+      existingCaptions = [],
+      youtubeUrl = "",
     } = req.body;
 
     if (!audioData) {
@@ -197,10 +446,16 @@ RUNNING STORY & GAMEPLAY SUMMARY FROM EARLIER PARTS:
 ${previousNarrativeContext || "Session beginning."}\n`
       : "";
 
+    const captionsContext = Array.isArray(existingCaptions) && existingCaptions.length > 0
+      ? `\n=== SOURCE CLOSED CAPTIONS & DIALOGUE TIMECODES (From YouTube / Transcript) ===
+Use these verbatim caption cues to assist with exact spoken words, phrasing, and timing precision:
+${existingCaptions.slice(0, 150).map((c: any) => `[${Math.floor((c.offset || 0) / 1000)}s]: "${c.text}"`).join("\n")}\n`
+      : "";
+
     const prompt = `
 You are an expert tabletop RPG audio engineer, forensic acoustic linguist, and master fantasy scribe.
 Analyze this recorded session audio file from the TTRPG campaign "${cleanTitle}" (Date: ${sessionDate || "Active"}).
-${chunkContext}
+${youtubeUrl ? `Source: YouTube Audio Track (${youtubeUrl})\n` : ""}${chunkContext}${captionsContext}
 KNOWN PARTY ROSTER & ROLES TO MATCH VOICES AGAINST:
 - Lead Storyteller & Adjudicator: ${cleanDm}
 - Player Characters:

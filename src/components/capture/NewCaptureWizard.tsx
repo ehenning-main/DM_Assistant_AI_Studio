@@ -1,11 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Mic, Video, Upload, ChevronLeft, Loader2, AlertTriangle, CheckCircle2, X, HardDrive, Link2 } from "lucide-react";
-import { Campaign, CampaignPlayer, CaptureMethod, DriveAudioFile } from "../../types";
+import { Mic, Video, Upload, ChevronLeft, Loader2, AlertTriangle, CheckCircle2, X, HardDrive, Link2, Youtube } from "lucide-react";
+import { Campaign, CampaignPlayer, CaptureMethod, DriveAudioFile, SessionAudioItem } from "../../types";
 import { TablePlayersPanel } from "./TablePlayersPanel";
 import { listAudioInputs } from "../../services/liveRecorder";
 import { detectMeetingPlatform, getBotConfig } from "../../services/captureApi";
 import { isRealFirebase } from "../../firebase";
 import { GoogleDriveAudioPicker } from "../GoogleDriveAudioPicker";
+import { YouTubeAudioModal } from "../YouTubeAudioModal";
+import { YouTubeExtractedAudio } from "../../services/youtubeService";
 
 export interface WizardDetails {
   title: string;
@@ -42,11 +44,27 @@ export function NewCaptureWizard({ campaign, defaultTitle, onUpdatePlayers, onSt
   // Upload
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [drivePickerOpen, setDrivePickerOpen] = useState(false);
+  const [youtubePickerOpen, setYoutubePickerOpen] = useState(false);
 
   const players = campaign.players || [];
   const enrolled = players.filter((p) => p.enrollment);
   const platform = detectMeetingPlatform(meetingUrl);
   const details: WizardDetails = { title: title.trim() || defaultTitle, date };
+
+  async function handleStartYouTubeUpload(extracted: YouTubeExtractedAudio) {
+    setYoutubePickerOpen(false);
+    run(async () => {
+      const byteChars = atob(extracted.audioData);
+      const byteNumbers = new Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) {
+        byteNumbers[i] = byteChars.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const safeTitle = (extracted.title || "YouTube_Session_Track").replace(/[^\w\s.-]/g, "").trim();
+      const file = new File([byteArray], `${safeTitle}.mp3`, { type: "audio/mp3" });
+      await onStartUpload(details, { file });
+    });
+  }
 
   useEffect(() => {
     if (method === "live") {
@@ -197,6 +215,14 @@ export function NewCaptureWizard({ campaign, defaultTitle, onUpdatePlayers, onSt
                   <HardDrive className="w-4 h-4" /> Pick from Google Drive
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => setYoutubePickerOpen(true)}
+                disabled={busy}
+                className="w-full py-3 rounded-lg border border-red-900/60 bg-red-950/20 hover:bg-red-950/40 text-sm text-red-300 flex items-center justify-center gap-2 cursor-pointer hover:border-red-500 transition"
+              >
+                <Youtube className="w-4 h-4 text-red-500" /> Use YouTube Video Audio Track
+              </button>
               <p className="text-xs text-zinc-500">Video files are fine: only the audio track is used. You'll match speakers to players once the transcript is ready.</p>
               <GoogleDriveAudioPicker
                 isOpen={drivePickerOpen}
@@ -205,6 +231,13 @@ export function NewCaptureWizard({ campaign, defaultTitle, onUpdatePlayers, onSt
                   setDrivePickerOpen(false);
                   if (files[0]) run(() => onStartUpload(details, { driveFile: files[0] }));
                 }}
+              />
+              <YouTubeAudioModal
+                isOpen={youtubePickerOpen}
+                onClose={() => setYoutubePickerOpen(false)}
+                onAddTrackToQueue={() => {}}
+                onDirectTranscribe={handleStartYouTubeUpload}
+                queueLength={0}
               />
             </div>
           )}

@@ -3,6 +3,17 @@ export interface HighlightItem {
   imageUrl: string;
   caption: string;
   optimizedPrompt?: string;
+  majorTheme?: string;
+  thematicTitle?: string;
+  imageSource?: "custom_ai_account" | "project_ai_account" | "thematic_vector";
+  charactersInScene?: Array<{
+    name: string;
+    role?: string;
+    facialFeatures?: string;
+    bodyFeatures?: string;
+    attireAndGear?: string;
+    actionInScene?: string;
+  }>;
 }
 
 export interface CharacterItem {
@@ -189,6 +200,10 @@ export interface HeroCharacter {
   history: HeroProgressionRecord[];
   dndBeyondUrl?: string;
   avatarUrl?: string;
+  description?: string; // High-level appearance summary
+  visualDescription?: string; // Canonical locked visual profile for multi-session art continuity
+  facialFeatures?: string; // Specific facial features: eyes, jaw, facial hair, scars, skin tone
+  bodyFeatures?: string; // Specific body features: height, build, physique, hair length/color
   inventory?: Array<{
     name: string;
     description: string;
@@ -241,10 +256,15 @@ export interface AudioOutOfCharacterMoment {
 
 export interface SessionAudioItem {
   id: string;
-  source: "local" | "google_drive" | "live_mic" | "simulation";
+  source: "local" | "google_drive" | "live_mic" | "simulation" | "youtube";
   name: string;
   blob?: Blob;
   driveFile?: DriveAudioFile;
+  youtubeUrl?: string;
+  youtubeVideoId?: string;
+  youtubeThumbnail?: string;
+  youtubeChannel?: string;
+  captions?: Array<{ text: string; offset: number; duration: number }>;
   sizeBytes: number;
   sizeStr: string;
   timestamp: number; // Unix epoch milliseconds
@@ -270,8 +290,10 @@ export interface AudioSessionAnalysis {
   fileDuration?: string;
   overallAudioNotesMarkdown?: string;
   chunkCount?: number;
-  sourceType?: "local_upload" | "google_drive" | "live_mic" | "simulation" | "multi_file";
+  sourceType?: "local_upload" | "google_drive" | "live_mic" | "simulation" | "multi_file" | "youtube";
   driveFileId?: string;
+  youtubeUrl?: string;
+  youtubeVideoId?: string;
 }
 
 export interface DriveAudioFile {

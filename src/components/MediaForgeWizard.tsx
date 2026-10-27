@@ -56,9 +56,21 @@ export function MediaForgeWizard({ session, onUpdateSession }: MediaForgeWizardP
         setProgress(`Forging highlight artwork ${i + 1}/3: "${promptText.substring(0, 30)}..."`);
         
         try {
+          const customAiKey = (() => {
+            try {
+              return localStorage.getItem("dma_custom_ai_key") || "";
+            } catch {
+              return "";
+            }
+          })();
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (customAiKey.trim()) {
+            headers["x-custom-ai-key"] = customAiKey.trim();
+          }
+
           const res = await fetch("/api/generate-highlight", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers,
             body: JSON.stringify({ promptString: promptText }),
           });
 

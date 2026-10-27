@@ -25,16 +25,32 @@ export const SAMPLE_CANON_CONFLICTS: CanonConflictItem[] = [
 ];
 
 /**
+ * Regular expression to locate the Canon Conflicts header and content,
+ * safely terminating at the next markdown section header (e.g. # 📜 SESSION TITLE) or EOF.
+ */
+export const CANON_CONFLICTS_REGEX = /(?:^|\n)(?:#{1,4}|\*\*)\s*⚖️?\s*(?:CANON\s+)?(?:CONFLICTS?|DISCREPANC(?:IES|Y))[^\n]*\n([\s\S]*?)(?=\n#{1,4}\s+[^\n]+|\s*$)/i;
+
+/**
  * Parses markdown text to extract Canon Conflict items from a "# ⚖️ CANON CONFLICTS" or similar section.
  */
 export function parseCanonConflicts(text: string): CanonConflictItem[] {
   if (!text) return [];
 
-  const conflicts: CanonConflictItem[] = [];
+  const match = text.match(CANON_CONFLICTS_REGEX);
+  if (!match) return [];
 
-  // Look for canon conflicts section heading (supports CONFLICTS, DISCREPANCIES, CANON DISCREPANCIES, etc.)
-  const sectionMatch = text.match(/(?:#|##|###|\*\*)\s*⚖️?\s*(?:CANON\s+)?(?:CONFLICTS?|DISCREPANC(?:IES|Y)).*?(?=\n(?:#|##|###|\*\*)\s+[A-Z0-9]|\s*$)/is);
-  const sectionText = sectionMatch ? sectionMatch[0] : text;
+  const sectionText = match[0] || "";
+  const sectionContent = match[1] || "";
+
+  // If no actual conflicts were noted (e.g. "None detected", "No discrepancies")
+  if (
+    /no\s+(?:canon\s+)?(?:conflicts?|discrepancies)|none\s+detected|no\s+conflicting/i.test(sectionContent) &&
+    !/(?:Conflict Topic|Discrepancy|DM Scribe Log Record)/i.test(sectionContent)
+  ) {
+    return [];
+  }
+
+  const conflicts: CanonConflictItem[] = [];
 
   // Pattern 1: Bullet/Numbered items starting with Conflict Topic / Discrepancy / Topic / Conflict
   const bulletBlocks = sectionText.split(/(?=\n\s*[-*1-9.]+\s+(?:\*\*)?(?:Conflict Topic|Discrepancy|Topic|Conflict)\b)/i);
@@ -63,8 +79,8 @@ export function parseCanonConflicts(text: string): CanonConflictItem[] {
   }
 
   // Fallback 2: Line-by-line parsing if heading exists but structured list blocks were not isolated
-  if (conflicts.length === 0 && sectionMatch) {
-    const lines = sectionText.split("\n");
+  if (conflicts.length === 0) {
+    const lines = sectionContent.split("\n");
     let currentTopic = "";
     let currentDm = "";
     let currentPlayer = "";
@@ -105,9 +121,12 @@ export function parseCanonConflicts(text: string): CanonConflictItem[] {
 /**
  * Strips the "# ⚖️ CANON CONFLICTS" raw markdown section from text
  * so it isn't rendered twice when shown in the interactive Adjudicator.
+ * Safely preserves the rest of the full chronicle summary.
  */
 export function stripCanonConflictsFromMarkdown(text: string): string {
   if (!text) return "";
-  return text.replace(/(?:#|##|###|\*\*)\s*⚖️?\s*(?:CANON\s+)?(?:CONFLICTS?|DISCREPANC(?:IES|Y)).*?(?=\n(?:#|##|###|\*\*)\s+[A-Z0-9]|\s*$)/is, "").trim();
+  const stripped = text.replace(CANON_CONFLICTS_REGEX, "\n").trim();
+  // Safety guard: never wipe out the entire summary
+  return stripped.length > 0 ? stripped : text;
 }
 

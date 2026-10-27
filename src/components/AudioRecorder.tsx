@@ -25,7 +25,8 @@ import {
   ListOrdered,
   Plus,
   Calendar,
-  X
+  X,
+  Youtube
 } from "lucide-react";
 import {
   AudioSessionAnalysis,
@@ -37,6 +38,8 @@ import {
   SessionAudioItem
 } from "../types";
 import { GoogleDriveAudioPicker } from "./GoogleDriveAudioPicker";
+import { YouTubeAudioModal } from "./YouTubeAudioModal";
+import { YouTubeExtractedAudio } from "../services/youtubeService";
 import { downloadDriveByteRange, formatBytes } from "../services/googleDriveService";
 import {
   createSessionAudioItemFromFile,
@@ -84,6 +87,7 @@ export function AudioRecorder({
 
   // Modals & Drive
   const [isDrivePickerOpen, setIsDrivePickerOpen] = useState(false);
+  const [isYouTubeModalOpen, setIsYouTubeModalOpen] = useState(false);
 
   // Audio preview playback
   const [previewingAudioUrl, setPreviewingAudioUrl] = useState<string | null>(null);
@@ -219,6 +223,54 @@ export function AudioRecorder({
 
     const combined = sortItemsChronologically([...audioQueue, ...newItems]);
     setAudioQueue(combined);
+  }
+
+  // Handles YouTube audio track added to queue
+  function handleAddYouTubeTrack(item: SessionAudioItem) {
+    setPermissionError(null);
+    const combined = sortItemsChronologically([...audioQueue, item]);
+    setAudioQueue(combined);
+  }
+
+  // Handles immediate direct transcription of YouTube audio
+  async function handleDirectTranscribeYouTube(extracted: YouTubeExtractedAudio) {
+    setPermissionError(null);
+    let audioBlob: Blob | undefined;
+    try {
+      const byteCharacters = atob(extracted.audioData);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      audioBlob = new Blob([byteArray], { type: extracted.mimeType || "audio/mp3" });
+    } catch (_e) {}
+
+    const now = Date.now();
+    const ytItem: SessionAudioItem = {
+      id: `yt-${extracted.videoId}-${now}`,
+      source: "youtube",
+      name: `[YouTube] ${extracted.title.replace(/[^\w\s.-]/g, "").trim() || "Session Track"}.mp3`,
+      blob: audioBlob,
+      youtubeUrl: `https://www.youtube.com/watch?v=${extracted.videoId}`,
+      youtubeVideoId: extracted.videoId,
+      youtubeChannel: extracted.channel,
+      captions: extracted.captions,
+      sizeBytes: extracted.sizeBytes,
+      sizeStr: extracted.sizeStr,
+      timestamp: now,
+      timestampLabel: `${new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} (YouTube)`,
+      timestampSource: "metadata",
+      estimatedDurationSeconds: extracted.durationSeconds || 60,
+      estimatedDurationStr: extracted.durationFormatted || formatDuration(extracted.durationSeconds || 60),
+      order: 1,
+      status: "pending",
+    };
+
+    setAudioQueue([ytItem]);
+    setTimeout(() => {
+      startProcessingChronologicalQueue();
+    }, 150);
   }
 
   // Drag and drop handlers
@@ -452,6 +504,8 @@ export function AudioRecorder({
               timeOffsetMinutes: chunkMinutesOffset,
               previousSpeakers: accumulatedSpeakers,
               previousNarrativeContext: runningNarrativeRecap,
+              existingCaptions: item.captions || [],
+              youtubeUrl: item.youtubeUrl || "",
             }),
           });
 
@@ -530,7 +584,9 @@ export function AudioRecorder({
         fileDuration: totalDurationStr,
         processedAt: new Date().toISOString(),
         chunkCount: totalFiles,
-        sourceType: totalFiles > 1 ? "multi_file" : audioQueue[0]?.source === "google_drive" ? "google_drive" : "local_upload",
+        sourceType: totalFiles > 1 ? "multi_file" : audioQueue[0]?.source === "youtube" ? "youtube" : audioQueue[0]?.source === "google_drive" ? "google_drive" : "local_upload",
+        youtubeUrl: audioQueue[0]?.youtubeUrl,
+        youtubeVideoId: audioQueue[0]?.youtubeVideoId,
         overallAudioNotesMarkdown: `### 🎙️ Chronological Session Chronicle: Ground Truth
 **Sequential Recordings Processed:** ${totalFiles} (${totalDurationStr} session duration)
 **Chronological Order:**
@@ -744,38 +800,61 @@ ${audioQueue.map((f, i) => `${i + 1}. **${f.name}** [${f.sessionTimeRange || "00
         </div>
       )}
 
-      {/* Dual Audio Import Inputs (Google Drive & Multi-File Drag-and-Drop) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {/* Option 1: Google Drive Import (Multi-File Selection) */}
+      {/* Triple Audio Import Inputs (YouTube Video Track, Google Drive, and Local Files) */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {/* Option 1: YouTube Video Audio Track */}
+        <div
+          id="btn-open-youtube-modal"
+          onClick={() => setIsYouTubeModalOpen(true)}
+          className="border-2 border-dashed rounded-lg p-3.5 text-center cursor-pointer transition flex flex-col items-center justify-center gap-2 border-red-900/60 hover:border-red-500 bg-red-950/20 hover:bg-red-950/40 group"
+        >
+          <div className="w-10 h-10 rounded-xl bg-red-600/20 border border-red-500/40 flex items-center justify-center text-red-500 group-hover:scale-105 transition-transform shadow-inner">
+            <Youtube className="w-5 h-5 text-red-500" />
+          </div>
+
+          <div>
+            <p className="font-sans font-medium text-xs sm:text-sm text-zinc-100 flex items-center justify-center gap-1.5">
+              <span>YouTube Audio Track</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded bg-red-500/20 text-red-300 font-mono font-semibold">
+                URL Audio
+              </span>
+            </p>
+            <p className="text-zinc-400 text-[11px] font-sans mt-0.5 leading-snug">
+              Paste video link to stream &amp; transcribe actual-play audio
+            </p>
+          </div>
+        </div>
+
+        {/* Option 2: Google Drive Import (Multi-File Selection) */}
         <div
           id="btn-open-drive-picker"
           onClick={() => setIsDrivePickerOpen(true)}
-          className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition flex flex-col items-center justify-center gap-2 border-stone-800 hover:border-amber-500/60 bg-stone-950/40 hover:bg-stone-950/80"
+          className="border-2 border-dashed rounded-lg p-3.5 text-center cursor-pointer transition flex flex-col items-center justify-center gap-2 border-stone-800 hover:border-amber-500/60 bg-stone-950/40 hover:bg-stone-950/80 group"
         >
-          <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+          <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 group-hover:scale-105 transition-transform">
             <HardDrive className="w-5 h-5" />
           </div>
 
           <div>
             <p className="font-sans font-medium text-xs sm:text-sm text-stone-200 flex items-center justify-center gap-1.5">
-              <span>Import from Google Drive</span>
+              <span>Import from Drive</span>
               <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-mono">
                 Multi-Select
               </span>
             </p>
-            <p className="text-stone-400 text-[11px] font-sans mt-0.5">
-              Select multiple session parts (.mp3, .m4a, .wav) from Drive
+            <p className="text-stone-400 text-[11px] font-sans mt-0.5 leading-snug">
+              Select session parts (.mp3, .m4a, .wav) from Drive
             </p>
           </div>
         </div>
 
-        {/* Option 2: Local Multi-File Upload & Drag-and-Drop */}
+        {/* Option 3: Local Multi-File Upload & Drag-and-Drop */}
         <div
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
-          className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition flex flex-col items-center justify-center gap-2 ${
+          className={`border-2 border-dashed rounded-lg p-3.5 text-center cursor-pointer transition flex flex-col items-center justify-center gap-2 group ${
             isDragging
               ? "border-red-500 bg-red-950/20"
               : "border-zinc-800 hover:border-red-500/60 bg-zinc-950/40 hover:bg-zinc-950/80"
@@ -796,16 +875,16 @@ ${audioQueue.map((f, i) => `${i + 1}. **${f.name}** [${f.sessionTimeRange || "00
             id="audio-file-input"
           />
 
-          <div className="w-10 h-10 rounded-xl bg-red-950/50 border border-red-500/30 flex items-center justify-center text-red-400">
+          <div className="w-10 h-10 rounded-xl bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-300 group-hover:scale-105 transition-transform">
             <Upload className="w-5 h-5" />
           </div>
 
           <div>
             <p className="font-sans font-medium text-xs sm:text-sm text-zinc-200">
-              Upload Local Audio Files
+              Upload Local Audio
             </p>
-            <p className="text-zinc-500 text-[11px] font-sans mt-0.5">
-              Select or drag multiple files (Part 1, Part 2, etc.)
+            <p className="text-zinc-500 text-[11px] font-sans mt-0.5 leading-snug">
+              Select or drag multiple files (Part 1, Part 2)
             </p>
           </div>
         </div>
@@ -933,6 +1012,17 @@ ${audioQueue.map((f, i) => `${i + 1}. **${f.name}** [${f.sessionTimeRange || "00
                         {item.source === "live_mic" && (
                           <span className="text-[9px] px-1.5 py-0.2 rounded bg-red-950/80 text-red-400 border border-red-800/60 font-mono">
                             Mic Take
+                          </span>
+                        )}
+                        {item.source === "youtube" && (
+                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-red-950/80 text-red-400 border border-red-800/60 font-mono flex items-center gap-1">
+                            <Youtube className="w-2.5 h-2.5" />
+                            YouTube Track
+                          </span>
+                        )}
+                        {item.captions && item.captions.length > 0 && (
+                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 font-mono">
+                            CC Cues
                           </span>
                         )}
                       </div>
@@ -1271,6 +1361,15 @@ ${audioQueue.map((f, i) => `${i + 1}. **${f.name}** [${f.sessionTimeRange || "00
         onClose={() => setIsDrivePickerOpen(false)}
         onSelectDriveFiles={handleSelectDriveFiles}
         alreadySelectedFileIds={audioQueue.filter((it) => it.driveFile).map((it) => it.driveFile!.id)}
+      />
+
+      {/* YouTube Audio Track Import Modal */}
+      <YouTubeAudioModal
+        isOpen={isYouTubeModalOpen}
+        onClose={() => setIsYouTubeModalOpen(false)}
+        onAddTrackToQueue={handleAddYouTubeTrack}
+        onDirectTranscribe={handleDirectTranscribeYouTube}
+        queueLength={audioQueue.length}
       />
     </div>
   );
