@@ -486,9 +486,9 @@ export function ChronicleSummarySection({
                 {summary ? (
                   <MarkdownRenderer
                     content={
-                      parsedConflicts.length > 0
+                      (parsedConflicts.length > 0
                         ? stripCanonConflictsFromMarkdown(summary)
-                        : summary
+                        : summary) || summary
                     }
                   />
                 ) : (

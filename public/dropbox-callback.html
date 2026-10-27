@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connecting Dropbox…</title>
+    <style>body{font-family:system-ui,sans-serif;background:#09090b;color:#e4e4e7;display:grid;place-items:center;height:100vh;margin:0}</style>
+  </head>
+  <body>
+    <p id="msg">Connecting Dropbox…</p>
+    <script>
+      // Hands the OAuth code back to the app window that opened this popup (same origin only), then closes.
+      (function () {
+        var p = new URLSearchParams(window.location.search);
+        var payload = { type: "dropbox-oauth", code: p.get("code"), state: p.get("state"), error: p.get("error_description") || p.get("error") };
+        if (window.opener) {
+          window.opener.postMessage(payload, window.location.origin);
+          window.close();
+        } else {
+          document.getElementById("msg").textContent = "You can close this window and return to the app.";
+        }
+      })();
+    </script>
+  </body>
+</html>
