@@ -1,13 +1,23 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { exec } from "child_process";
+import os from "os";
+import { execFile } from "child_process";
 import dotenv from "dotenv";
 import { GenerateVideosOperation, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import { YoutubeTranscript } from "youtube-transcript";
-import { getAi, generateContentWithRetry, extractJsonText } from "./server/gemini";
+import {
+  getAi,
+  generateContentWithRetry,
+  extractJsonText,
+  customAiKeyMiddleware,
+  hasCustomAiKey,
+  activeApiKey,
+  verifyApiKey,
+} from "./server/gemini";
 import { captureRouter } from "./server/captureRoutes";
+import { ffmpegPath } from "./server/audioPipeline";
 
 dotenv.config();
 
@@ -18,6 +28,9 @@ const PORT = 3000;
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
+// Lets requests carrying a user's own Gemini key (x-custom-ai-key) run on that key instead of the server's
+app.use(customAiKeyMiddleware);
+
 // Session capture pipeline: chunked uploads, audio normalization, diarized transcription, meeting bots
 app.use("/api/capture", captureRouter);
 
@@ -26,15 +39,45 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-// Durable Image Generation helper with model fallback & Pollinations AI fallback & SVG placeholder fallback
-async function generateImageWithFallback(promptString: string, aspectRatio = "1:1"): Promise<string> {
-  const fullPrompt = `Fantasy RPG hand-drawn illustration style, dungeons and dragons concept art, highly detailed, atmospheric, rich vivid colors: ${promptString}`;
+// Verifies a user's own Gemini API key before the client stores it ("AI Account" settings)
+app.post("/api/verify-ai-account", async (req, res) => {
+  const result = await verifyApiKey(String(req.body?.apiKey || "").trim());
+  res.status(result.valid ? 200 : 400).json(result);
+});
 
-  // Attempt 1: Pollinations AI - fast, reliable AI image generation service returning unique RPG artwork
+type ImageSource = "custom_ai_account" | "project_ai_account" | "pollinations" | "thematic_vector";
+
+// Durable Image Generation helper with model fallback & Pollinations AI fallback & SVG placeholder fallback.
+// When the user linked their own Gemini key, Gemini image models are tried before Pollinations.
+async function generateImageWithFallback(
+  promptString: string,
+  aspectRatio = "1:1"
+): Promise<{ imageUrl: string; imageSource: ImageSource }> {
+  const fullPrompt = `Fantasy RPG hand-drawn illustration style, dungeons and dragons concept art, highly detailed, atmospheric, rich vivid colors: ${promptString}`;
+  const geminiSource: ImageSource = hasCustomAiKey() ? "custom_ai_account" : "project_ai_account";
+
+  if (hasCustomAiKey()) {
+    const geminiImage = await generateGeminiImage(fullPrompt, aspectRatio);
+    if (geminiImage) return { imageUrl: geminiImage, imageSource: geminiSource };
+  }
+
+  const pollinationsImage = await generatePollinationsImage(fullPrompt);
+  if (pollinationsImage) return { imageUrl: pollinationsImage, imageSource: "pollinations" };
+
+  if (!hasCustomAiKey()) {
+    const geminiImage = await generateGeminiImage(fullPrompt, aspectRatio);
+    if (geminiImage) return { imageUrl: geminiImage, imageSource: geminiSource };
+  }
+
+  return { imageUrl: thematicSvgImage(promptString), imageSource: "thematic_vector" };
+}
+
+// Pollinations AI - fast, keyless image generation service returning unique RPG artwork
+async function generatePollinationsImage(fullPrompt: string): Promise<string | null> {
   try {
     const seed = Math.floor(Math.random() * 1000000);
     const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(fullPrompt)}?width=1024&height=1024&seed=${seed}&nologo=true&enhance=true`;
-    const response = await fetch(pollinationsUrl);
+    const response = await fetch(pollinationsUrl, { signal: AbortSignal.timeout(45_000) });
     if (response.ok) {
       const buffer = await response.arrayBuffer();
       if (buffer.byteLength > 1000) {
@@ -46,8 +89,11 @@ async function generateImageWithFallback(promptString: string, aspectRatio = "1:
   } catch (_err) {
     // Silent catch, try next provider
   }
+  return null;
+}
 
-  // Attempt 2: Try imagen-3.0-generate-002
+async function generateGeminiImage(fullPrompt: string, aspectRatio: string): Promise<string | null> {
+  // Attempt 1: Try imagen-3.0-generate-002
   try {
     const ai = getAi();
     const imgRes = await ai.models.generateImages({
@@ -66,7 +112,7 @@ async function generateImageWithFallback(promptString: string, aspectRatio = "1:
     // Silent fallback
   }
 
-  // Attempt 3: Try gemini-2.5-flash-image
+  // Attempt 2: Try gemini-2.5-flash-image
   try {
     const ai = getAi();
     const contentRes = await ai.models.generateContent({
@@ -86,9 +132,12 @@ async function generateImageWithFallback(promptString: string, aspectRatio = "1:
   } catch (_err) {
     // Silent fallback
   }
+  return null;
+}
 
-  // Fallback 4: Dynamic atmospheric SVG card image with scene text
-  const escaped = promptString.substring(0, 110).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// Last resort: dynamic atmospheric SVG card image with scene text
+function thematicSvgImage(promptString: string): string {
+  const escaped = promptString.substring(0, 110).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
     <defs>
       <linearGradient id="bgG" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -147,41 +196,40 @@ app.post("/api/transcribe-audio", async (req, res) => {
   }
 });
 
-// Helper to locate and ensure yt-dlp binary is executable
-function findYtDlpBinary(): string {
-  const tmpPath = "/tmp/yt-dlp";
+// bin/yt-dlp is a Python zipapp, so the host needs python3. Running it through python3 directly also
+// avoids depending on the execute bit, which some deploy pipelines strip.
+function ytDlpCommand(): { file: string; prefixArgs: string[] } {
   const localBin = path.resolve("./bin/yt-dlp");
+  if (fs.existsSync(localBin)) return { file: "python3", prefixArgs: [localBin] };
+  return { file: "yt-dlp", prefixArgs: [] };
+}
 
-  // In container environments (e.g. Cloud Run), copying to /tmp guarantees execution rights
-  if (fs.existsSync(localBin)) {
-    try {
-      fs.chmodSync(localBin, 0o755);
-    } catch (_e) {}
-
-    try {
-      if (!fs.existsSync(tmpPath) || fs.statSync(tmpPath).size !== fs.statSync(localBin).size) {
-        fs.copyFileSync(localBin, tmpPath);
+// Runs yt-dlp without a shell: every argument is passed verbatim, so request values can't inject commands.
+function runYtDlp(args: string[], timeoutMs: number): Promise<string> {
+  const { file, prefixArgs } = ytDlpCommand();
+  return new Promise((resolve, reject) => {
+    execFile(file, [...prefixArgs, ...args], { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (!err) return resolve(stdout);
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return reject(new Error(`${file} is not installed on this server. YouTube import needs Python 3 to run yt-dlp.`));
       }
-      fs.chmodSync(tmpPath, 0o755);
-      return tmpPath;
-    } catch (_e) {
-      return localBin;
-    }
-  }
+      if (err.killed) return reject(new Error(`yt-dlp timed out after ${Math.round(timeoutMs / 1000)}s.`));
+      reject(new Error(stderr?.trim().split("\n").slice(-3).join(" ") || err.message));
+    });
+  });
+}
 
-  if (fs.existsSync(tmpPath)) {
-    try {
-      fs.chmodSync(tmpPath, 0o755);
-      return tmpPath;
-    } catch (_e) {}
-  }
-
-  return "yt-dlp";
+function formatClock(totalSeconds: number): string {
+  const hrs = Math.floor(totalSeconds / 3600);
+  const mins = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+  const mmss = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  return hrs > 0 ? `${hrs}:${mmss}` : mmss;
 }
 
 // Helper to extract YouTube 11-char Video ID
 function parseYouTubeId(url: string): string | null {
-  if (!url) return null;
+  if (!url || typeof url !== "string") return null;
   const trimmed = url.trim();
   const match = trimmed.match(
     /(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/
@@ -190,6 +238,12 @@ function parseYouTubeId(url: string): string | null {
   if (/^[\w-]{11}$/.test(trimmed)) return trimmed;
   return null;
 }
+
+// Optional clip range such as "1:00-5:30" or "00:10:00-01:20:00"
+const YOUTUBE_TIME_RANGE = /^\d{1,2}(?::\d{1,2}){0,2}-\d{1,2}(?::\d{1,2}){0,2}$/;
+const YT_EXTRACTOR_ARGS = ["--extractor-args", "youtube:player_client=android"];
+// Mono 16 kHz 32 kbps CBR, matching the capture pipeline; also makes duration = bytes / 4000
+const YT_AUDIO_BYTES_PER_SECOND = 4000;
 
 // 1.35 YouTube Video Metadata & Caption Probe
 app.post("/api/youtube/info", async (req, res) => {
@@ -206,7 +260,6 @@ app.post("/api/youtube/info", async (req, res) => {
     let channel = "YouTube";
     let thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
     let durationSeconds = 0;
-    let durationFormatted = "00:00";
     let hasCaptions = false;
     let captionSnippet: string | undefined;
 
@@ -225,29 +278,17 @@ app.post("/api/youtube/info", async (req, res) => {
 
     // 2. Fetch duration via yt-dlp dump-json if possible
     try {
-      const ytDlp = findYtDlpBinary();
-      const dumpCmd = `${ytDlp} --dump-json --no-warnings --extractor-args "youtube:player_client=android" "${cleanUrl}"`;
-      const dumpOutput = await new Promise<string>((resolve, reject) => {
-        exec(dumpCmd, { timeout: 15000 }, (err, stdout) => {
-          if (err) reject(err);
-          else resolve(stdout);
-        });
-      });
+      const dumpOutput = await runYtDlp(
+        ["--dump-json", "--no-playlist", "--no-warnings", ...YT_EXTRACTOR_ARGS, cleanUrl],
+        30_000
+      );
       const dumpJson = JSON.parse(dumpOutput);
-      if (dumpJson.duration) {
-        durationSeconds = Math.round(dumpJson.duration);
-        const mins = Math.floor(durationSeconds / 60);
-        const secs = durationSeconds % 60;
-        const hrs = Math.floor(mins / 60);
-        if (hrs > 0) {
-          durationFormatted = `${hrs}:${String(mins % 60).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-        } else {
-          durationFormatted = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-        }
-      }
+      if (dumpJson.duration) durationSeconds = Math.round(dumpJson.duration);
       if (dumpJson.title) title = dumpJson.title;
       if (dumpJson.uploader) channel = dumpJson.uploader;
-    } catch (_dlpErr) {}
+    } catch (dlpErr: any) {
+      console.warn("yt-dlp metadata probe failed:", dlpErr?.message || dlpErr);
+    }
 
     // 3. Check for captions via youtube-transcript
     try {
@@ -261,9 +302,6 @@ app.post("/api/youtube/info", async (req, res) => {
         if (!durationSeconds && transcriptCues[transcriptCues.length - 1]?.offset) {
           const lastCue = transcriptCues[transcriptCues.length - 1];
           durationSeconds = Math.round((lastCue.offset + (lastCue.duration || 0)) / 1000);
-          const mins = Math.floor(durationSeconds / 60);
-          const secs = durationSeconds % 60;
-          durationFormatted = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
         }
       }
     } catch (_tErr) {}
@@ -276,7 +314,7 @@ app.post("/api/youtube/info", async (req, res) => {
       channel,
       thumbnail,
       durationSeconds,
-      durationFormatted,
+      durationFormatted: formatClock(durationSeconds),
       hasCaptions,
       captionSnippet,
       embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=0`,
@@ -289,59 +327,51 @@ app.post("/api/youtube/info", async (req, res) => {
 
 // 1.36 YouTube Audio Extractor
 app.post("/api/youtube/extract-audio", async (req, res) => {
+  let workDir: string | null = null;
   try {
-    const { url, timeRange } = req.body;
+    const { url } = req.body;
     const videoId = parseYouTubeId(url);
     if (!videoId) {
       res.status(400).json({ error: "Invalid YouTube URL or Video ID." });
       return;
     }
 
+    const timeRange = typeof req.body.timeRange === "string" ? req.body.timeRange.replace(/\s+/g, "") : "";
+    if (timeRange && !YOUTUBE_TIME_RANGE.test(timeRange)) {
+      res.status(400).json({ error: 'Invalid time range. Use a start-end form like "1:00-5:30" or "00:10:00-01:20:00".' });
+      return;
+    }
+
     const cleanUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    const ytDlp = findYtDlpBinary();
-    const tempFileId = `${Date.now()}_${videoId}`;
-    const tempOutTemplate = `/tmp/yt_${tempFileId}.%(ext)s`;
-    const tempMp3Path = `/tmp/yt_${tempFileId}.mp3`;
+    workDir = fs.mkdtempSync(path.join(os.tmpdir(), "yt-audio-"));
 
-    // Download section flags if specified
-    let sectionFlag = "";
-    if (timeRange && typeof timeRange === "string" && timeRange.includes("-")) {
-      sectionFlag = `--download-sections "*${timeRange}"`;
+    const ffmpeg = ffmpegPath();
+    await runYtDlp(
+      [
+        "--no-playlist",
+        "--no-warnings",
+        ...YT_EXTRACTOR_ARGS,
+        "-x",
+        "--audio-format", "mp3",
+        "--audio-quality", "32K",
+        "--postprocessor-args", "ExtractAudio:-ac 1 -ar 16000",
+        // yt-dlp only searches PATH for ffmpeg; point it at the bundled ffmpeg-static binary when present
+        ...(ffmpeg !== "ffmpeg" ? ["--ffmpeg-location", ffmpeg] : []),
+        ...(timeRange ? ["--download-sections", `*${timeRange}`] : []),
+        "-o", path.join(workDir, "audio.%(ext)s"),
+        cleanUrl,
+      ],
+      10 * 60_000
+    );
+
+    const outputs = fs.readdirSync(workDir);
+    const outputName = outputs.includes("audio.mp3") ? "audio.mp3" : outputs.find((f) => f.startsWith("audio."));
+    if (!outputName) {
+      throw new Error("Audio extraction did not produce an output file.");
     }
+    const audioBuffer = fs.readFileSync(path.join(workDir, outputName));
 
-    const extractCmd = `${ytDlp} --extractor-args "youtube:player_client=android" -x --audio-format mp3 --audio-quality 5 ${sectionFlag} -o "${tempOutTemplate}" "${cleanUrl}"`;
-
-    // Run extraction
-    await new Promise<void>((resolve, reject) => {
-      exec(extractCmd, { timeout: 60000 }, (err, _stdout, stderr) => {
-        if (err) {
-          return reject(new Error(stderr || err.message));
-        }
-        resolve();
-      });
-    });
-
-    if (!fs.existsSync(tempMp3Path)) {
-      const files = fs.readdirSync("/tmp").filter((f) => f.startsWith(`yt_${tempFileId}`));
-      if (files.length === 0) {
-        throw new Error("Audio extraction did not produce an output file.");
-      }
-    }
-
-    const finalPath = fs.existsSync(tempMp3Path)
-      ? tempMp3Path
-      : path.join("/tmp", fs.readdirSync("/tmp").find((f) => f.startsWith(`yt_${tempFileId}`))!);
-
-    const stat = fs.statSync(finalPath);
-    const audioBuffer = fs.readFileSync(finalPath);
-    const base64Data = audioBuffer.toString("base64");
-
-    // Clean up temporary file
-    try {
-      fs.unlinkSync(finalPath);
-    } catch (_unlinkErr) {}
-
-    // Check for captions in parallel
+    // Check for captions
     let captions: any[] = [];
     try {
       const cues = await YoutubeTranscript.fetchTranscript(videoId);
@@ -350,7 +380,7 @@ app.post("/api/youtube/extract-audio", async (req, res) => {
       }
     } catch (_cErr) {}
 
-    // Video duration and title fallback
+    // Video title fallback
     let title = "YouTube Audio Track";
     let channel = "YouTube";
     try {
@@ -364,23 +394,19 @@ app.post("/api/youtube/extract-audio", async (req, res) => {
       }
     } catch (_oeErr) {}
 
-    // Estimate duration from mp3 size (64kbps = ~8000 bytes per sec)
-    const estimatedDurationSeconds = Math.max(15, Math.round(stat.size / 8000));
-    const mins = Math.floor(estimatedDurationSeconds / 60);
-    const secs = estimatedDurationSeconds % 60;
-    const durationFormatted = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+    const durationSeconds = Math.max(1, Math.round(audioBuffer.length / YT_AUDIO_BYTES_PER_SECOND));
 
     res.json({
       success: true,
       videoId,
       title,
       channel,
-      durationSeconds: estimatedDurationSeconds,
-      durationFormatted,
-      audioData: base64Data,
-      mimeType: "audio/mp3",
-      sizeBytes: stat.size,
-      sizeStr: `${Math.round(stat.size / 1024)} KB`,
+      durationSeconds,
+      durationFormatted: formatClock(durationSeconds),
+      audioData: audioBuffer.toString("base64"),
+      mimeType: "audio/mpeg",
+      sizeBytes: audioBuffer.length,
+      sizeStr: `${Math.round(audioBuffer.length / 1024)} KB`,
       captions: captions.length > 0 ? captions : undefined,
     });
   } catch (error: any) {
@@ -388,6 +414,8 @@ app.post("/api/youtube/extract-audio", async (req, res) => {
     res.status(500).json({
       error: `YouTube audio extraction failed: ${error.message || "Unable to extract audio track."}`,
     });
+  } finally {
+    if (workDir) fs.rmSync(workDir, { recursive: true, force: true });
   }
 });
 
@@ -621,7 +649,7 @@ app.post("/api/drive/audio-chunk-proxy", async (req, res) => {
       return;
     }
 
-    const driveUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+    const driveUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(String(fileId))}?alt=media`;
     const fetchHeaders: Record<string, string> = {
       Authorization: authHeader,
     };
@@ -829,8 +857,8 @@ app.post("/api/generate-highlight", async (req, res) => {
       return;
     }
 
-    const imageUrl = await generateImageWithFallback(promptString, "1:1");
-    res.json({ imageUrl });
+    const { imageUrl, imageSource } = await generateImageWithFallback(promptString, "1:1");
+    res.json({ imageUrl, imageSource });
   } catch (error: any) {
     console.error("Image generation error:", error);
     res.status(400).json({ error: error.message || "Failed to generate highlight image." });
@@ -840,7 +868,11 @@ app.post("/api/generate-highlight", async (req, res) => {
 // 3.5. Highlight Generation with Character & Scene Continuity from Session to Session
 app.post("/api/generate-continuity-illustration", async (req, res) => {
   try {
-    const { summary, characters, campaignHeroes, previousHighlights } = req.body;
+    const { characters, campaignHeroes, previousHighlights, title, notes, playerNotes, campaignTitle, campaignSetting } = req.body;
+    // The client can forge art from the DM journal or player notes before an AI summary exists
+    const summary = [req.body.summary, notes, playerNotes]
+      .filter((t) => typeof t === "string" && t.trim())
+      .join("\n\n");
     if (!summary) {
       res.status(400).json({ error: "Missing campaign summary for illustration design." });
       return;
@@ -865,6 +897,7 @@ You are an expert RPG Visual Director and Concept Artist for D&D 5e campaigns.
 We need to generate an accurate, unique, high-quality, continuity-aware visual scene for a campaign session based on its chronicle summary.
 
 INPUT DATA:
+${campaignTitle ? `CAMPAIGN: "${campaignTitle}"${campaignSetting ? ` (Setting: ${campaignSetting})` : ""}\n` : ""}${title ? `SESSION: "${title}"\n` : ""}
 1. SESSION CHRONICLE SUMMARY:
 "${summary}"
 
@@ -882,11 +915,18 @@ YOUR TASK:
    - Describe the exact environment (cavern, tavern, castle, swamp, ruins), lighting (torchlight, moonlight, spell glow), mood, composition (cinematic wide-angle, dramatic low-angle), and color palette.
    - The art style MUST be: "High fantasy RPG hand-drawn illustration style, dungeons and dragons character concept art, rich vivid colors, atmospheric lighting, epic digital painting, highly detailed."
 4. Provide a succinct 1-sentence caption describing the exact event portrayed in the art.
+5. Name the session's major theme and give the artwork a short evocative title.
+6. List each character shown in the scene with the visual details you used for them.
 
 Respond with valid JSON:
 {
   "optimizedPrompt": "Your detailed, continuity-aware visual prompt...",
-  "chosenSceneCaption": "A concise 1-sentence caption for the generated artwork"
+  "chosenSceneCaption": "A concise 1-sentence caption for the generated artwork",
+  "majorTheme": "The episode's central theme in a few words",
+  "thematicTitle": "A short evocative title for the artwork",
+  "charactersInScene": [
+    { "name": "...", "role": "...", "facialFeatures": "...", "bodyFeatures": "...", "attireAndGear": "...", "actionInScene": "..." }
+  ]
 }
 Do not include markdown backticks outside the JSON. Return raw JSON only.
 `;
@@ -907,8 +947,18 @@ Do not include markdown backticks outside the JSON. Return raw JSON only.
     const chosenCaption = parsed.chosenSceneCaption || "An epic chronicle moment unfolds.";
 
     // Step 2: Generate Image with Fallback
-    const imageUrl = await generateImageWithFallback(finalImagePrompt, "1:1");
-    res.json({ imageUrl, caption: chosenCaption, optimizedPrompt: finalImagePrompt });
+    const { imageUrl, imageSource } = await generateImageWithFallback(finalImagePrompt, "1:1");
+    res.json({
+      imageUrl,
+      imageSource,
+      caption: chosenCaption,
+      optimizedPrompt: finalImagePrompt,
+      majorTheme: typeof parsed.majorTheme === "string" ? parsed.majorTheme : undefined,
+      thematicTitle: typeof parsed.thematicTitle === "string" ? parsed.thematicTitle : undefined,
+      charactersInScene: Array.isArray(parsed.charactersInScene) ? parsed.charactersInScene : undefined,
+      // Only a vector placeholder could be made on the shared key: suggest linking a personal AI account
+      requiresPaidKey: imageSource === "thematic_vector" && !hasCustomAiKey(),
+    });
   } catch (error: any) {
     console.error("Continuity illustration generation error:", error);
     res.status(400).json({ error: error.message || "Failed to generate continuity-aware illustration." });
@@ -992,7 +1042,7 @@ app.post("/api/video-download", async (req, res) => {
       return;
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = activeApiKey();
     if (!apiKey) {
       res.status(500).json({ error: "Server API key missing." });
       return;
@@ -2481,6 +2531,11 @@ ${text}
 });
 
 // Mount Vite middleware for development or serve builds in production
+// Unknown API routes get a JSON 404 instead of falling through to the SPA's index.html
+app.use("/api", (req, res) => {
+  res.status(404).json({ error: `No API route for ${req.method} ${req.originalUrl}` });
+});
+
 async function startServer() {
   try {
     if (process.env.NODE_ENV !== "production") {

@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { HeroCharacter, HeroProgressionRecord, Campaign } from "../types";
 import { motion, AnimatePresence } from "motion/react";
+import { escapeHtml } from "../lib/escapeHtml";
 
 interface HeroPartyTrackerProps {
   campaign: Campaign;
@@ -1529,7 +1530,7 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
                       {syncLogs.length > 0 && (
                         <div className="space-y-1 pl-2 border-l-2 border-emerald-500/35 font-sans text-[11px] max-h-36 overflow-y-auto">
                           {syncLogs.map((log, idx) => (
-                            <p key={idx} className="text-zinc-350 leading-relaxed" dangerouslySetInnerHTML={{ __html: log.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') }} />
+                            <p key={idx} className="text-zinc-350 leading-relaxed" dangerouslySetInnerHTML={{ __html: escapeHtml(log).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') }} />
                           ))}
                         </div>
                       )}

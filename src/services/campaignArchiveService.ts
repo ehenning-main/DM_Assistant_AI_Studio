@@ -1,5 +1,12 @@
 import { Campaign, Session } from "../types";
-import { createNewCampaign, createNewSession } from "../storage";
+import {
+  createNewCampaign,
+  createNewSession,
+  fetchAllCampaigns,
+  fetchAllSessions,
+  updateExistingCampaign,
+  updateExistingSession,
+} from "../storage";
 
 export interface CampaignArchiveData {
   schemaVersion: "dma-campaign-archive-v1";
@@ -168,8 +175,14 @@ export function validateAndParseArchive(rawInput: string | any): {
       };
     }
 
-    // Ensure session properties are well structured
+    // Hand-written or older archives may lack an id; "restore IDs" mode needs one to write to
+    if (!campaign.id) {
+      campaign = { ...campaign, id: `campaign-${Date.now()}-${Math.random().toString(36).substring(2, 6)}` };
+    }
+
+    // Ensure session properties are well structured, keeping fields not normalized here (e.g. capture)
     const validSessions: Session[] = sessions.map((s, idx) => ({
+      ...s,
       id: s.id || `session-${Date.now()}-${idx}`,
       userId: s.userId || "local_guest_dm",
       campaignId: campaign!.id,
@@ -240,8 +253,16 @@ export async function importCampaignArchive({
     updatedAt: timestampISO,
   };
 
+  // Restoring onto records that still exist must update them: Firestore rules reject a create over an existing doc
+  const existingCampaignIds = isNew ? new Set<string>() : new Set((await fetchAllCampaigns(activeUserId)).map((c) => c.id));
+  const existingSessionIds = isNew ? new Set<string>() : new Set((await fetchAllSessions(activeUserId)).map((s) => s.id));
+
   // 1. Create the campaign
-  await createNewCampaign(campaignToSave);
+  if (existingCampaignIds.has(targetCampaignId)) {
+    await updateExistingCampaign(campaignToSave);
+  } else {
+    await createNewCampaign(campaignToSave);
+  }
 
   // 2. Create the associated sessions
   let importedCount = 0;
@@ -261,7 +282,11 @@ export async function importCampaignArchive({
       order: s.order !== undefined ? s.order : i + 1,
     };
 
-    await createNewSession(sessionToSave);
+    if (existingSessionIds.has(targetSessionId)) {
+      await updateExistingSession(sessionToSave);
+    } else {
+      await createNewSession(sessionToSave);
+    }
     importedCount++;
   }
 

@@ -268,9 +268,7 @@ export function AudioRecorder({
     };
 
     setAudioQueue([ytItem]);
-    setTimeout(() => {
-      startProcessingChronologicalQueue();
-    }, 150);
+    startProcessingChronologicalQueue([ytItem]);
   }
 
   // Drag and drop handlers
@@ -373,15 +371,17 @@ export function AudioRecorder({
    * 3. Slices large individual files (>25MB) into acts if needed
    * 4. Propagates speaker voices & ongoing narrative context across files for seamless character attribution
    */
-  async function startProcessingChronologicalQueue() {
-    if (audioQueue.length === 0) return;
+  async function startProcessingChronologicalQueue(queueOverride?: SessionAudioItem[]) {
+    // Callers that just ran setAudioQueue pass the new queue, since state hasn't re-rendered yet
+    const queue = queueOverride ?? audioQueue;
+    if (queue.length === 0) return;
 
     abortControllerRef.current = false;
     setTranscribing(true);
     setPermissionError(null);
     setChunkProgress(null);
 
-    const totalFiles = audioQueue.length;
+    const totalFiles = queue.length;
     let accumulatedTranscript = "";
     const accumulatedSpeakers: AudioSpeaker[] = [];
     const accumulatedInGameMoments: AudioInGameMoment[] = [];
@@ -390,7 +390,7 @@ export function AudioRecorder({
 
     // Calculate total session seconds
     let runningSessionSecondsOffset = 0;
-    const totalSessionSeconds = audioQueue.reduce((acc, item) => acc + item.estimatedDurationSeconds, 0);
+    const totalSessionSeconds = queue.reduce((acc, item) => acc + item.estimatedDurationSeconds, 0);
 
     try {
       const driveToken = await getGoogleAccessToken();
@@ -399,7 +399,7 @@ export function AudioRecorder({
         if (abortControllerRef.current) break;
 
         setCurrentProcessingFileIndex(fileIdx);
-        const item = audioQueue[fileIdx];
+        const item = queue[fileIdx];
 
         // Mark item as processing
         setAudioQueue((prev) =>
@@ -578,19 +578,19 @@ export function AudioRecorder({
         speakers: accumulatedSpeakers.length > 0 ? accumulatedSpeakers : [{ id: "dm", label: dmName, role: "DM", voiceCharacteristics: "Lead storyteller" }],
         inGameMoments: accumulatedInGameMoments,
         outOfCharacterMoments: accumulatedOOCMoments,
-        fileName: totalFiles === 1 ? audioQueue[0].name : `${totalFiles} Session Recordings (Chronological)`,
-        fileNames: audioQueue.map((f) => f.name),
+        fileName: totalFiles === 1 ? queue[0].name : `${totalFiles} Session Recordings (Chronological)`,
+        fileNames: queue.map((f) => f.name),
         fileCount: totalFiles,
         fileDuration: totalDurationStr,
         processedAt: new Date().toISOString(),
         chunkCount: totalFiles,
-        sourceType: totalFiles > 1 ? "multi_file" : audioQueue[0]?.source === "youtube" ? "youtube" : audioQueue[0]?.source === "google_drive" ? "google_drive" : "local_upload",
-        youtubeUrl: audioQueue[0]?.youtubeUrl,
-        youtubeVideoId: audioQueue[0]?.youtubeVideoId,
+        sourceType: totalFiles > 1 ? "multi_file" : queue[0]?.source === "youtube" ? "youtube" : queue[0]?.source === "google_drive" ? "google_drive" : "local_upload",
+        youtubeUrl: queue[0]?.youtubeUrl,
+        youtubeVideoId: queue[0]?.youtubeVideoId,
         overallAudioNotesMarkdown: `### 🎙️ Chronological Session Chronicle: Ground Truth
 **Sequential Recordings Processed:** ${totalFiles} (${totalDurationStr} session duration)
 **Chronological Order:**
-${audioQueue.map((f, i) => `${i + 1}. **${f.name}** [${f.sessionTimeRange || "00:00:00"}] (Recorded: ${f.timestampLabel})`).join("\n")}
+${queue.map((f, i) => `${i + 1}. **${f.name}** [${f.sessionTimeRange || "00:00:00"}] (Recorded: ${f.timestampLabel})`).join("\n")}
 
 **Party Voices Identified:** ${accumulatedSpeakers.map((s) => s.label).join(", ") || dmName}
 **In-Game Key Moments:** ${accumulatedInGameMoments.length}
@@ -1101,7 +1101,7 @@ ${audioQueue.map((f, i) => `${i + 1}. **${f.name}** [${f.sessionTimeRange || "00
             </div>
 
             <button
-              onClick={startProcessingChronologicalQueue}
+              onClick={() => startProcessingChronologicalQueue()}
               disabled={transcribing}
               id="btn-process-chronological-queue"
               className="flex items-center gap-2 px-5 py-2.5 bg-red-500 hover:bg-red-400 text-zinc-950 font-sans font-bold text-xs rounded-lg transition shadow-lg active:scale-95 cursor-pointer disabled:opacity-50"

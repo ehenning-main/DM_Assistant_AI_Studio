@@ -5,7 +5,7 @@ export interface HighlightItem {
   optimizedPrompt?: string;
   majorTheme?: string;
   thematicTitle?: string;
-  imageSource?: "custom_ai_account" | "project_ai_account" | "thematic_vector";
+  imageSource?: "custom_ai_account" | "project_ai_account" | "pollinations" | "thematic_vector";
   charactersInScene?: Array<{
     name: string;
     role?: string;

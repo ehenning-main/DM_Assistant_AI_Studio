@@ -446,30 +446,9 @@ export default function App() {
     }
   }
 
-  // Handle restoring / importing campaign from JSON archive
+  // Handle restoring / importing campaign from JSON archive: reload everything and focus the imported realm
   async function handleCampaignArchiveImportSuccess(importedCampaignId: string) {
-    if (!activeUserId) return;
-    try {
-      setCampaignsLoading(true);
-      const updatedCampaigns = await fetchAllCampaigns(activeUserId);
-      setCampaigns(updatedCampaigns);
-      setSelectedCampaignId(importedCampaignId);
-
-      setSessionsLoading(true);
-      const updatedSessions = await fetchAllSessions(importedCampaignId);
-      setSessions(updatedSessions);
-      if (updatedSessions.length > 0) {
-        setSelectedSession(updatedSessions[0]);
-      } else {
-        setSelectedSession(null);
-      }
-    } catch (err: any) {
-      console.error("Archive reload error:", err);
-      alert(`Could not reload imported realm: ${err.message}`);
-    } finally {
-      setCampaignsLoading(false);
-      setSessionsLoading(false);
-    }
+    await loadCampaignsAndSessions(importedCampaignId);
   }
 
   // Action: Spawn a new Campaign parent

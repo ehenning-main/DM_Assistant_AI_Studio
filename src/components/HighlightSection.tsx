@@ -123,24 +123,26 @@ export function HighlightSection({
     try {
       const newWin = window.open();
       if (newWin) {
-        newWin.document.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <title>${caption ? caption.replace(/</g, "&lt;") : "Full Size Chronicle Artwork"}</title>
-              <style>
-                body { margin: 0; background: #0a0a0c; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; font-family: system-ui, sans-serif; color: #f4f4f5; padding: 20px; box-sizing: border-box; }
-                img { max-width: 95vw; max-height: 85vh; object-fit: contain; border-radius: 8px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); border: 1px solid #3f3f46; }
-                h2 { margin-top: 16px; font-size: 16px; font-weight: 500; color: #f59e0b; text-align: center; max-width: 800px; font-style: italic; }
-              </style>
-            </head>
-            <body>
-              <img src="${imageUrl}" alt="Full Size Artwork" />
-              ${caption ? `<h2>"${caption.replace(/</g, "&lt;")}"</h2>` : ""}
-            </body>
-          </html>
-        `);
-        newWin.document.close();
+        // Built with DOM APIs, not document.write: the popup shares this origin, and imageUrl/caption can
+        // come from imported archives, so they must never be parsed as HTML.
+        const d = newWin.document;
+        d.title = caption || "Full Size Chronicle Artwork";
+        const style = d.createElement("style");
+        style.textContent = `
+          body { margin: 0; background: #0a0a0c; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; font-family: system-ui, sans-serif; color: #f4f4f5; padding: 20px; box-sizing: border-box; }
+          img { max-width: 95vw; max-height: 85vh; object-fit: contain; border-radius: 8px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); border: 1px solid #3f3f46; }
+          h2 { margin-top: 16px; font-size: 16px; font-weight: 500; color: #f59e0b; text-align: center; max-width: 800px; font-style: italic; }
+        `;
+        d.head.appendChild(style);
+        const img = d.createElement("img");
+        img.src = imageUrl;
+        img.alt = "Full Size Artwork";
+        d.body.appendChild(img);
+        if (caption) {
+          const heading = d.createElement("h2");
+          heading.textContent = `"${caption}"`;
+          d.body.appendChild(heading);
+        }
       }
     } catch (err) {
       console.warn("[IMAGE LIGHTBOX] Direct window.open popup prevented by sandbox:", err);

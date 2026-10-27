@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { User, Plus, Trash2, Shield, UserX, Sparkles, ChevronDown, ChevronUp, Dices, Save, Check, RefreshCw, AlertCircle, Edit, GitMerge, ArrowRight, Layers, BookOpen, BookMarked, History } from "lucide-react";
 import { CharacterItem, Session, HeroCharacter } from "../types";
 import { motion, AnimatePresence } from "motion/react";
+import { escapeHtml } from "../lib/escapeHtml";
 
 interface CharacterTrackerProps {
   characters: CharacterItem[];
@@ -715,7 +716,7 @@ export function CharacterTracker({
             {autoDetectSummary.logs.map((log, idx) => (
               <div key={idx} className="text-zinc-300 flex items-start gap-1.5 leading-normal">
                 <span className="text-purple-400 shrink-0">•</span>
-                <span dangerouslySetInnerHTML={{ __html: log.replace(/\*\*(.*?)\*\*/g, '<strong class="text-zinc-100 font-bold">$1</strong>').replace(/\*(.*?)\*/g, '<em class="text-zinc-400 italic">$1</em>') }} />
+                <span dangerouslySetInnerHTML={{ __html: escapeHtml(log).replace(/\*\*(.*?)\*\*/g, '<strong class="text-zinc-100 font-bold">$1</strong>').replace(/\*(.*?)\*/g, '<em class="text-zinc-400 italic">$1</em>') }} />
               </div>
             ))}
           </div>
