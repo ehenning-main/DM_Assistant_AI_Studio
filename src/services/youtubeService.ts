@@ -100,12 +100,18 @@ export async function fetchYouTubeInfo(url: string): Promise<YouTubeVideoInfo> {
   return await res.json();
 }
 
+export interface YouTubeExtractionError extends Error {
+  isBotCheck?: boolean;
+  videoId?: string;
+}
+
 /**
  * Triggers backend audio stream extraction from YouTube
  */
 export async function extractYouTubeAudio(
   url: string,
-  timeRange?: string
+  timeRange?: string,
+  cookies?: string
 ): Promise<YouTubeExtractedAudio> {
   const videoId = parseYouTubeVideoId(url);
   if (!videoId) {
@@ -118,15 +124,54 @@ export async function extractYouTubeAudio(
     body: JSON.stringify({
       url: `https://www.youtube.com/watch?v=${videoId}`,
       timeRange,
+      cookies,
     }),
   });
 
   if (!res.ok) {
     const errorJson = await res.json().catch(() => ({ error: "Failed to extract audio track" }));
-    throw new Error(errorJson.error || "Unable to extract audio track from YouTube.");
+    const customErr: YouTubeExtractionError = new Error(errorJson.error || "Unable to extract audio track from YouTube.");
+    customErr.isBotCheck = !!errorJson.isBotCheck;
+    customErr.videoId = videoId;
+    throw customErr;
   }
 
   return await res.json();
+}
+
+/**
+ * Helper to package a local audio/video file or captured tab audio Blob into a YouTubeExtractedAudio object
+ */
+export async function createExtractedAudioFromBlob(
+  blob: Blob,
+  title: string,
+  videoId = "local-capture"
+): Promise<YouTubeExtractedAudio> {
+  const arrayBuffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64Data = btoa(binary);
+
+  const durationSecs = Math.max(10, Math.round(blob.size / 16000));
+  const mins = Math.floor(durationSecs / 60);
+  const secs = durationSecs % 60;
+  const durationFormatted = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+
+  return {
+    success: true,
+    videoId,
+    title,
+    channel: "Local / Tab Recording",
+    durationSeconds: durationSecs,
+    durationFormatted,
+    audioData: base64Data,
+    mimeType: blob.type || "audio/webm",
+    sizeBytes: blob.size,
+    sizeStr: `${Math.round(blob.size / 1024)} KB`,
+  };
 }
 
 /**

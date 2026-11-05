@@ -289,8 +289,11 @@ app.post("/api/youtube/info", async (req, res) => {
 
 // 1.36 YouTube Audio Extractor
 app.post("/api/youtube/extract-audio", async (req, res) => {
+  let cookieFilePath: string | null = null;
+  const tempFileId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  
   try {
-    const { url, timeRange } = req.body;
+    const { url, timeRange, cookies } = req.body;
     const videoId = parseYouTubeId(url);
     if (!videoId) {
       res.status(400).json({ error: "Invalid YouTube URL or Video ID." });
@@ -299,9 +302,17 @@ app.post("/api/youtube/extract-audio", async (req, res) => {
 
     const cleanUrl = `https://www.youtube.com/watch?v=${videoId}`;
     const ytDlp = findYtDlpBinary();
-    const tempFileId = `${Date.now()}_${videoId}`;
     const tempOutTemplate = `/tmp/yt_${tempFileId}.%(ext)s`;
     const tempMp3Path = `/tmp/yt_${tempFileId}.mp3`;
+
+    // Handle cookies if provided via payload or environment
+    const cookieData = (cookies && typeof cookies === "string" && cookies.trim()) || process.env.YOUTUBE_COOKIES;
+    let cookieFlag = "";
+    if (cookieData) {
+      cookieFilePath = `/tmp/yt_cookie_${tempFileId}.txt`;
+      fs.writeFileSync(cookieFilePath, cookieData, "utf8");
+      cookieFlag = `--cookies "${cookieFilePath}"`;
+    }
 
     // Download section flags if specified
     let sectionFlag = "";
@@ -309,13 +320,35 @@ app.post("/api/youtube/extract-audio", async (req, res) => {
       sectionFlag = `--download-sections "*${timeRange}"`;
     }
 
-    const extractCmd = `${ytDlp} --extractor-args "youtube:player_client=android" -x --audio-format mp3 --audio-quality 5 ${sectionFlag} -o "${tempOutTemplate}" "${cleanUrl}"`;
+    // Build extraction command with --no-warnings to suppress python version deprecations
+    const extractCmd = `${ytDlp} --no-warnings ${cookieFlag} --extractor-args "youtube:player_client=android" -x --audio-format mp3 --audio-quality 5 ${sectionFlag} -o "${tempOutTemplate}" "${cleanUrl}"`;
 
     // Run extraction
     await new Promise<void>((resolve, reject) => {
       exec(extractCmd, { timeout: 60000 }, (err, _stdout, stderr) => {
         if (err) {
-          return reject(new Error(stderr || err.message));
+          const rawErr = stderr || err.message || "";
+          // Strip harmless python deprecation notices from error
+          const cleanErr = rawErr
+            .replace(/Deprecated Feature:.*?Python.*?deprecated\.\s*/gi, "")
+            .replace(/WARNING:.*?\n/gi, "")
+            .trim();
+
+          const isBotCheck =
+            cleanErr.includes("Sign in to confirm you’re not a bot") ||
+            cleanErr.includes("confirm you’re not a bot") ||
+            cleanErr.includes("LOGIN_REQUIRED") ||
+            cleanErr.includes("Use --cookies");
+
+          if (isBotCheck) {
+            const botErr: any = new Error(
+              "YouTube requires bot verification for this video when downloaded directly from a cloud server. Please use Tab Audio Capture or upload the audio/video file."
+            );
+            botErr.isBotCheck = true;
+            return reject(botErr);
+          }
+
+          return reject(new Error(cleanErr || "YouTube audio extraction failed."));
         }
         resolve();
       });
@@ -385,8 +418,21 @@ app.post("/api/youtube/extract-audio", async (req, res) => {
     });
   } catch (error: any) {
     console.error("Audio extraction error:", error);
+    if (cookieFilePath && fs.existsSync(cookieFilePath)) {
+      try { fs.unlinkSync(cookieFilePath); } catch (_e) {}
+    }
+    
+    if (error.isBotCheck) {
+      res.status(422).json({
+        error: "YouTube requires bot verification for this video when accessed from a cloud server. You can capture it directly from your browser tab or upload the downloaded audio/video file.",
+        isBotCheck: true,
+      });
+      return;
+    }
+
     res.status(500).json({
       error: `YouTube audio extraction failed: ${error.message || "Unable to extract audio track."}`,
+      isBotCheck: false,
     });
   }
 });
@@ -1956,20 +2002,94 @@ function parseDndBeyondJson(json: any, sourceType: "auto" | "pasted_json"): any 
       .trim();
   };
 
-  // 6. Inventory
-  const inventory = (data.inventory || []).map((item: any) => {
-    const def = item.definition || {};
-    return {
-      name: def.name || "Unknown Item",
-      description: stripHtml(def.description || def.snippet || ""),
-      quantity: item.quantity || 1,
-      equipped: !!item.equipped,
-      type: def.filterType || def.type || "Item",
-      rarity: def.rarity || "Common",
-      isAttuned: !!item.isAttuned || !!item.attuned,
-      weight: def.weight || 0,
-    };
-  });
+  // Helper to query SRD reference for accurate rarity & rules text
+  let magicItemsRefCache: Record<string, any> | null = null;
+  const KNOWN_MUNDANE_SERVER = new Set([
+    "greatsword", "longsword", "shortsword", "dagger", "scimitar", "rapier", "handaxe", "battleaxe",
+    "greataxe", "halberd", "glaive", "pike", "spear", "trident", "lance", "war pick", "morningstar",
+    "flail", "warhammer", "maul", "mace", "club", "greatclub", "quarterstaff", "light hammer",
+    "sickle", "whip", "light crossbow", "heavy crossbow", "hand crossbow", "shortbow", "longbow",
+    "dart", "sling", "blowgun", "net",
+    "padded armor", "leather armor", "studded leather armor", "hide armor", "chain shirt",
+    "scale mail", "breastplate", "half plate", "ring mail", "chain mail", "splint armor", "plate armor", "plate", "shield",
+    "backpack", "bedroll", "mess kit", "tinderbox", "torch", "rations", "waterskin", "hempen rope", "silk rope",
+    "crowbar", "hammer", "piton", "hooded lantern", "bullseye lantern", "oil flask", "flask",
+    "grappling hook", "iron spikes", "pouch", "sack", "quiver", "case", "clothes, common", "clothes, fine",
+    "clothes, traveler's", "robes", "robe", "boots", "cloak", "ring", "amulet", "gem", "diamond", "ruby", "emerald"
+  ]);
+
+  const getSrdItemRef = (name: string) => {
+    if (!name) return null;
+    const cleanKey = name.toLowerCase().replace(/[^\w\s-]/g, "").replace(/\s+/g, " ").trim();
+    if (KNOWN_MUNDANE_SERVER.has(cleanKey)) return null;
+
+    if (!magicItemsRefCache) {
+      try {
+        const refPath = path.resolve(process.cwd(), "src/data/magicItemsReference.json");
+        if (fs.existsSync(refPath)) {
+          magicItemsRefCache = JSON.parse(fs.readFileSync(refPath, "utf-8"));
+        }
+      } catch (_e) {
+        magicItemsRefCache = {};
+      }
+    }
+    if (!magicItemsRefCache) return null;
+    if (magicItemsRefCache[cleanKey]) return magicItemsRefCache[cleanKey];
+
+    const strippedKey = cleanKey
+      .replace(/\b(attuned|requires attunement|cursed|\+1|\+2|\+3)\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (strippedKey && strippedKey !== cleanKey && magicItemsRefCache[strippedKey]) {
+      return magicItemsRefCache[strippedKey];
+    }
+    return null;
+  };
+
+  // 6. Inventory: Deduplicate and consolidate items cleanly
+  const consolidatedInventoryMap = new Map<string, any>();
+  for (const rawItem of (data.inventory || [])) {
+    const def = rawItem.definition || {};
+    const itemName = def.name || "Unknown Item";
+    const srdRef = getSrdItemRef(itemName);
+
+    // Resolve accurate rarity: if character sheet has missing or default Common rarity, confirm with 5e reference
+    let resolvedRarity = def.rarity;
+    if (!resolvedRarity || resolvedRarity.toLowerCase() === "common") {
+      if (srdRef?.rarity) {
+        resolvedRarity = srdRef.rarity;
+      } else if (rawItem.isAttuned || rawItem.attuned) {
+        resolvedRarity = "Uncommon";
+      } else {
+        resolvedRarity = "Common";
+      }
+    }
+
+    const rawDesc = stripHtml(def.description || def.snippet || "");
+    const resolvedDescription = rawDesc.length > 10 ? rawDesc : (srdRef?.description || rawDesc);
+    const isAttuned = !!rawItem.isAttuned || !!rawItem.attuned;
+    const equipped = !!rawItem.equipped;
+    const qty = rawItem.quantity || 1;
+
+    // Consolidate identical items by name, equipped state, and attunement status
+    const sig = `${itemName.toLowerCase()}::${equipped ? "eq" : "pack"}::${isAttuned ? "att" : "noatt"}`;
+    if (consolidatedInventoryMap.has(sig)) {
+      consolidatedInventoryMap.get(sig).quantity += qty;
+    } else {
+      consolidatedInventoryMap.set(sig, {
+        name: itemName,
+        description: resolvedDescription,
+        quantity: qty,
+        equipped,
+        type: srdRef?.type || def.filterType || def.type || "Item",
+        rarity: resolvedRarity,
+        isAttuned,
+        weight: def.weight || 0,
+      });
+    }
+  }
+  const inventory = Array.from(consolidatedInventoryMap.values());
 
   // Calculate AC (Armor Class) thoroughly and accurately
   const dexScore = stats.dexterity.total;
@@ -2219,9 +2339,17 @@ function parseDndBeyondJson(json: any, sourceType: "auto" | "pasted_json"): any 
     charisma: stats.charisma.total,
     inventory,
     spells,
-    magicItems: inventory
-      .filter((item: any) => item.isAttuned || (item.equipped && ["uncommon", "rare", "very rare", "legendary", "artifact"].includes(item.rarity?.toLowerCase() || "")))
-      .map((item: any) => item.name),
+    magicItems: Array.from(new Set<string>(
+      inventory
+        .filter((item: any) => 
+          !KNOWN_MUNDANE_SERVER.has(item.name.toLowerCase().trim()) && (
+            item.isAttuned || 
+            ["uncommon", "rare", "very rare", "legendary", "artifact"].includes(item.rarity?.toLowerCase() || "") ||
+            !!getSrdItemRef(item.name)
+          )
+        )
+        .map((item: any) => item.name)
+    )),
     sourceType,
     importedAt: new Date().toISOString(),
   };

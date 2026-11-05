@@ -3,10 +3,19 @@ import {
   User, Plus, Trash2, Shield, Heart, Sparkles, TrendingUp, Gem, 
   ChevronRight, Edit, Save, Calendar, Award, Users, Check, X, 
   Flame, HelpCircle, Swords, Scroll, Info, AlertCircle, Link2, Globe, RefreshCw, FileText, ExternalLink,
-  Briefcase, BookOpen, Import, Settings
+  Briefcase, BookOpen, Import, Settings, Search, Filter
 } from "lucide-react";
 import { HeroCharacter, HeroProgressionRecord, Campaign } from "../types";
 import { motion, AnimatePresence } from "motion/react";
+import { getMagicItemReference, fetchOnlineItemReference, normalizeRarity, MagicItemReference, isMundaneEquipment } from "../services/magicItemReferenceService";
+
+function cleanItemKey(name: string): string {
+  return (name || "")
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 interface HeroPartyTrackerProps {
   campaign: Campaign;
@@ -36,6 +45,46 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
   const [showAddHeroModal, setShowAddHeroModal] = useState(false);
   const [showProgressModal, setShowProgressModal] = useState(false);
   const [progressModalType, setProgressModalType] = useState<"level" | "magic_item">("level");
+  const [showTreasuresModal, setShowTreasuresModal] = useState(false);
+  const [treasureSearch, setTreasureSearch] = useState("");
+  const [treasureHeroFilter, setTreasureHeroFilter] = useState("all");
+  const [verifiedReferenceItems, setVerifiedReferenceItems] = useState<Record<string, MagicItemReference>>({});
+
+  // Asynchronously query official online 5e reference materials for party items to confirm description and rarity
+  React.useEffect(() => {
+    let isMounted = true;
+    const itemsToVerify = new Set<string>();
+
+    heroesList.forEach(hero => {
+      (hero.magicItems || []).forEach(item => {
+        if (item && item.trim()) itemsToVerify.add(item.trim());
+      });
+      (hero.inventory || []).forEach(inv => {
+        if (inv.isAttuned && inv.name && inv.name.trim()) itemsToVerify.add(inv.name.trim());
+      });
+    });
+
+    if (itemsToVerify.size === 0) return;
+
+    itemsToVerify.forEach(async (itemName) => {
+      try {
+        const verified = await fetchOnlineItemReference(itemName);
+        if (verified && isMounted) {
+          setVerifiedReferenceItems(prev => {
+            if (prev[itemName.toLowerCase()]?.description === verified.description) return prev;
+            return {
+              ...prev,
+              [itemName.toLowerCase()]: verified
+            };
+          });
+        }
+      } catch (_e) {}
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [heroesList]);
 
   // Add Hero form state
   const [newHeroName, setNewHeroName] = useState("");
@@ -237,36 +286,37 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
 
     const passivePerception = pc.passivePerception || (10 + Math.floor((wisdom - 10) / 2));
 
-    // Magic items: Merge items from pc.magicItems and any magic/attuned items in pc.inventory
-    const magicItemsSet = new Set<string>();
+    // Magic items: Merge items from pc.magicItems and any magic/attuned items in pc.inventory cleanly without duplicates
+    const magicItemsMap = new Map<string, string>();
     
     if (Array.isArray(pc.magicItems)) {
       pc.magicItems.forEach((item: string) => {
-        if (item) magicItemsSet.add(item);
+        if (!item) return;
+        const trimmed = item.trim();
+        const clean = cleanItemKey(trimmed);
+        if (clean && !isMundaneEquipment(trimmed)) {
+          magicItemsMap.set(clean, trimmed);
+        }
       });
     }
 
     if (Array.isArray(pc.inventory)) {
       pc.inventory.forEach((item: any) => {
+        if (!item || !item.name) return;
+        const trimmed = item.name.trim();
+        const clean = cleanItemKey(trimmed);
+        if (!clean || isMundaneEquipment(trimmed)) return;
         const rarity = item.rarity?.toLowerCase() || "";
         const isMagicRarity = ["uncommon", "rare", "very rare", "legendary", "artifact"].includes(rarity);
         if (item.isAttuned || (isMagicRarity && item.equipped)) {
-          magicItemsSet.add(item.name);
+          if (!magicItemsMap.has(clean)) {
+            magicItemsMap.set(clean, trimmed);
+          }
         }
       });
     }
 
-    // Fallback: If both sources produced no magic items, inspect all non-common items in the inventory
-    if (magicItemsSet.size === 0 && Array.isArray(pc.inventory)) {
-      pc.inventory.forEach((item: any) => {
-        const rarity = item.rarity?.toLowerCase() || "";
-        if (["uncommon", "rare", "very rare", "legendary", "artifact"].includes(rarity)) {
-          magicItemsSet.add(item.name);
-        }
-      });
-    }
-
-    const magicItems = Array.from(magicItemsSet);
+    const magicItems = Array.from(magicItemsMap.values());
 
     return {
       id: "hero_" + Math.random().toString(36).substring(2, 11),
@@ -772,23 +822,41 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
             updatesDesc.push(`Armor Class updated: ${orig.ac} -> ${pc.ac}`);
           }
 
-          // merge magic items
-          const magicItemsSet = new Set<string>((orig.magicItems || []).map(i => i.trim()));
+          // merge magic items cleanly without duplicates or mundane gear
+          const magicItemsMap = new Map<string, string>();
+          (orig.magicItems || []).forEach(item => {
+            if (!item) return;
+            const clean = cleanItemKey(item);
+            if (clean && !isMundaneEquipment(item)) {
+              magicItemsMap.set(clean, item.trim());
+            }
+          });
+
           if (Array.isArray(pc.magicItems)) {
             pc.magicItems.forEach((item: string) => {
-              if (item) magicItemsSet.add(item.trim());
-            });
-          }
-          if (Array.isArray(pc.inventory)) {
-            pc.inventory.forEach((item: any) => {
-              const rarity = item.rarity?.toLowerCase() || "";
-              const isMagicRarity = ["uncommon", "rare", "very rare", "legendary", "artifact"].includes(rarity);
-              if (item.isAttuned || (isMagicRarity && item.equipped)) {
-                magicItemsSet.add(item.name.trim());
+              if (!item) return;
+              const clean = cleanItemKey(item);
+              if (clean && !isMundaneEquipment(item)) {
+                magicItemsMap.set(clean, item.trim());
               }
             });
           }
-          const mergedItems = Array.from(magicItemsSet);
+
+          if (Array.isArray(pc.inventory)) {
+            pc.inventory.forEach((item: any) => {
+              if (!item || !item.name) return;
+              const clean = cleanItemKey(item.name);
+              if (!clean || isMundaneEquipment(item.name)) return;
+              const rarity = item.rarity?.toLowerCase() || "";
+              const isMagicRarity = ["uncommon", "rare", "very rare", "legendary", "artifact"].includes(rarity);
+              if (item.isAttuned || (isMagicRarity && item.equipped)) {
+                if (!magicItemsMap.has(clean)) {
+                  magicItemsMap.set(clean, item.name.trim());
+                }
+              }
+            });
+          }
+          const mergedItems = Array.from(magicItemsMap.values());
           
           const newItems = mergedItems.filter(item => !(orig.magicItems || []).includes(item));
           if (newItems.length > 0) {
@@ -858,23 +926,32 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
             return charObj[key] !== undefined ? charObj[key] : fallbackVal;
           };
 
-          // merge magic items for new character
-          const magicItemsSet = new Set<string>();
+          // merge magic items for new character cleanly without duplicates or mundane equipment
+          const magicItemsMap = new Map<string, string>();
           if (Array.isArray(pc.magicItems)) {
             pc.magicItems.forEach((item: string) => {
-              if (item) magicItemsSet.add(item.trim());
+              if (!item) return;
+              const clean = cleanItemKey(item);
+              if (clean && !isMundaneEquipment(item)) {
+                magicItemsMap.set(clean, item.trim());
+              }
             });
           }
           if (Array.isArray(pc.inventory)) {
             pc.inventory.forEach((item: any) => {
+              if (!item || !item.name) return;
+              const clean = cleanItemKey(item.name);
+              if (!clean || isMundaneEquipment(item.name)) return;
               const rarity = item.rarity?.toLowerCase() || "";
               const isMagicRarity = ["uncommon", "rare", "very rare", "legendary", "artifact"].includes(rarity);
               if (item.isAttuned || (isMagicRarity && item.equipped)) {
-                magicItemsSet.add(item.name.trim());
+                if (!magicItemsMap.has(clean)) {
+                  magicItemsMap.set(clean, item.name.trim());
+                }
               }
             });
           }
-          const mergedItems = Array.from(magicItemsSet);
+          const mergedItems = Array.from(magicItemsMap.values());
 
           const newHero: HeroCharacter = {
             id: newId,
@@ -1017,31 +1094,31 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
       }
 
       // Align magic items directly with the character's active sheet state to prevent legacy accumulation
-      const magicItemsSet = new Set<string>();
+      const magicItemsMap = new Map<string, string>();
       if (Array.isArray(pc.magicItems)) {
         pc.magicItems.forEach((item: string) => {
-          if (item) magicItemsSet.add(item.trim());
+          if (!item) return;
+          const clean = cleanItemKey(item);
+          if (clean && !isMundaneEquipment(item)) {
+            magicItemsMap.set(clean, item.trim());
+          }
         });
       }
       if (Array.isArray(pc.inventory)) {
         pc.inventory.forEach((item: any) => {
+          if (!item || !item.name) return;
+          const clean = cleanItemKey(item.name);
+          if (!clean || isMundaneEquipment(item.name)) return;
           const rarity = item.rarity?.toLowerCase() || "";
           const isMagicRarity = ["uncommon", "rare", "very rare", "legendary", "artifact"].includes(rarity);
           if (item.isAttuned || (isMagicRarity && item.equipped)) {
-            magicItemsSet.add(item.name.trim());
+            if (!magicItemsMap.has(clean)) {
+              magicItemsMap.set(clean, item.name.trim());
+            }
           }
         });
       }
-      // If no magic items are attuned or equipped, fallback to inspect all non-common items in the inventory
-      if (magicItemsSet.size === 0 && Array.isArray(pc.inventory)) {
-        pc.inventory.forEach((item: any) => {
-          const rarity = item.rarity?.toLowerCase() || "";
-          if (["uncommon", "rare", "very rare", "legendary", "artifact"].includes(rarity)) {
-            magicItemsSet.add(item.name.trim());
-          }
-        });
-      }
-      const mergedItems = Array.from(magicItemsSet);
+      const mergedItems = Array.from(magicItemsMap.values());
       
       const newItems = mergedItems.filter(item => !(currentHero.magicItems || []).includes(item));
       if (newItems.length > 0) {
@@ -1582,16 +1659,29 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
           </div>
         </div>
 
-        <div className="bg-zinc-900/60 p-4 border border-zinc-800 rounded-lg flex items-center gap-3.5 shadow-lg">
-          <div className="p-2.5 bg-purple-500/10 text-purple-400 rounded-lg border border-purple-500/20">
-            <Gem className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="text-[10px] uppercase font-mono text-zinc-500 tracking-wider">Legendary Treasures</div>
-            <div className="text-xl font-fantasy font-black text-zinc-100 tracking-wide">
-              {heroesList.reduce((acc, h) => acc + (h.magicItems?.length || 0), 0)} Attuned
+        <div 
+          onClick={() => setShowTreasuresModal(true)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowTreasuresModal(true); } }}
+          className="bg-zinc-900/60 p-4 border border-zinc-800 hover:border-purple-500/50 hover:bg-zinc-900/90 rounded-lg flex items-center justify-between gap-3.5 shadow-lg cursor-pointer transition-all duration-200 group relative overflow-hidden focus:outline-none focus:ring-1 focus:ring-purple-500/40"
+          title="Click to view all Legendary Treasures & Attuned Relics across your party"
+        >
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="p-2.5 bg-purple-500/10 text-purple-400 rounded-lg border border-purple-500/20 group-hover:bg-purple-500/20 group-hover:scale-105 group-hover:text-purple-300 transition-all shrink-0">
+              <Gem className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[10px] uppercase font-mono text-zinc-500 group-hover:text-purple-400 transition-colors tracking-wider flex items-center gap-1.5 font-semibold">
+                <span>Magic Items & Relics</span>
+                <span className="text-[9px] px-1.5 py-0.2 bg-purple-950/60 text-purple-300 border border-purple-500/30 rounded font-mono font-normal">View Compendium</span>
+              </div>
+              <div className="text-xl font-fantasy font-black text-zinc-100 group-hover:text-purple-200 transition-colors tracking-wide">
+                {heroesList.reduce((acc, h) => acc + (h.magicItems?.length || 0), 0)} Attuned
+              </div>
             </div>
           </div>
+          <ChevronRight className="w-4 h-4 text-zinc-600 group-hover:text-purple-400 group-hover:translate-x-0.5 transition-all shrink-0" />
         </div>
       </div>
 
@@ -2751,30 +2841,70 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
                   </button>
                 </div>
 
-                {(!currentHero.magicItems || currentHero.magicItems.length === 0) ? (
-                  <div className="py-6 text-center text-xs text-zinc-550 font-sans italic">
-                    No magic items attuned or tracked for this hero yet. Cast some legendary treasures above!
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {currentHero.magicItems.map((item, index) => (
-                      <span
-                        key={index}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-purple-950/20 border border-purple-500/20 text-purple-300 text-xs rounded-full font-serif leading-none hover:bg-purple-950/40"
-                      >
-                        <Gem className="w-3 h-3 text-purple-400" />
-                        <span>{item}</span>
-                        <button
-                          onClick={() => handleRemoveMagicItemDirectly(item)}
-                          className="hover:text-red-400 ml-1 cursor-pointer focus:outline-none"
-                          title="Sever Relic Attunement"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
+                {(() => {
+                  const uniqueMagicItems: string[] = [];
+                  const seen = new Set<string>();
+                  (currentHero.magicItems || []).forEach(item => {
+                    const clean = cleanItemKey(item);
+                    if (!clean || seen.has(clean) || isMundaneEquipment(item)) return;
+                    seen.add(clean);
+                    uniqueMagicItems.push(item);
+                  });
+
+                  if (uniqueMagicItems.length === 0) {
+                    return (
+                      <div className="py-6 text-center text-xs text-zinc-550 font-sans italic">
+                        No magic items attuned or tracked for this hero yet. Cast some legendary treasures above!
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="flex flex-wrap gap-2">
+                      {uniqueMagicItems.map((item, index) => {
+                        const trimmed = item.trim();
+                        const clean = cleanItemKey(trimmed);
+                        const refMatch = verifiedReferenceItems[clean] || getMagicItemReference(trimmed);
+                        const invMatch = (currentHero.inventory || []).find(inv => 
+                          cleanItemKey(inv.name) === clean
+                        );
+                        const resolvedRarity = refMatch?.rarity ? normalizeRarity(refMatch.rarity) : (invMatch?.rarity && invMatch.rarity.toLowerCase() !== "common" ? normalizeRarity(invMatch.rarity) : "Uncommon");
+                        const resolvedDescription = refMatch?.description || invMatch?.description || "";
+                        const rarityClasses: Record<string, string> = {
+                          common: "bg-zinc-800/40 border-zinc-700/50 text-zinc-300",
+                          uncommon: "bg-emerald-950/30 border-emerald-500/30 text-emerald-300",
+                          rare: "bg-blue-950/30 border-blue-500/30 text-blue-300",
+                          "very rare": "bg-purple-950/30 border-purple-500/30 text-purple-300",
+                          legendary: "bg-amber-950/30 border-amber-500/30 text-amber-300",
+                          artifact: "bg-red-950/30 border-red-500/30 text-red-300"
+                        };
+                        const rarityColor = rarityClasses[resolvedRarity.toLowerCase()] || "bg-purple-950/20 border-purple-500/20 text-purple-300";
+
+                        return (
+                          <span
+                            key={index}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 border text-xs rounded-full font-serif leading-none transition-all ${rarityColor}`}
+                            title={resolvedDescription ? `[${resolvedRarity}] ${resolvedDescription}` : resolvedRarity}
+                          >
+                            <Gem className="w-3 h-3 shrink-0" />
+                            <span className="font-semibold">{trimmed}</span>
+                            <span className="text-[8.5px] uppercase font-mono opacity-80 border-l border-current/25 pl-1.5 ml-0.5">
+                              {resolvedRarity}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveMagicItemDirectly(item)}
+                              className="hover:text-red-400 ml-1 cursor-pointer focus:outline-none transition-colors"
+                              title="Sever Relic Attunement"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* 3.5. COMPANION INVENTORY & GEAR */}
@@ -2816,8 +2946,14 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
                     const filtered = currentHero.inventory.filter(item => {
                       const matchesSearch = item.name.toLowerCase().includes(inventorySearch.toLowerCase()) || 
                                            (item.description && item.description.toLowerCase().includes(inventorySearch.toLowerCase()));
-                      const rarityLower = item.rarity?.toLowerCase() || "";
-                      const isMagic = ["uncommon", "rare", "very rare", "legendary", "artifact"].includes(rarityLower);
+                      const isMundane = isMundaneEquipment(item.name);
+                      const refMatch = isMundane ? null : (verifiedReferenceItems[cleanItemKey(item.name)] || getMagicItemReference(item.name));
+                      const effectiveRarity = isMundane
+                        ? "Common"
+                        : (item.rarity && item.rarity.toLowerCase() !== "common"
+                            ? normalizeRarity(item.rarity)
+                            : (refMatch?.rarity ? normalizeRarity(refMatch.rarity) : normalizeRarity(item.rarity || "Common")));
+                      const isMagic = !isMundane && ["uncommon", "rare", "very rare", "legendary", "artifact"].includes(effectiveRarity.toLowerCase());
                       
                       if (inventoryFilter === "magic") return matchesSearch && isMagic;
                       if (inventoryFilter === "common") return matchesSearch && !isMagic;
@@ -2835,7 +2971,25 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
                     return (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-60 overflow-y-auto pr-1">
                         {filtered.map((item, idx) => {
-                          const isMagic = ["uncommon", "rare", "very rare", "legendary", "artifact"].includes(item.rarity?.toLowerCase() || "");
+                          const isMundane = isMundaneEquipment(item.name);
+                          const refMatch = isMundane ? null : (verifiedReferenceItems[cleanItemKey(item.name)] || getMagicItemReference(item.name));
+                          const effectiveRarity = isMundane
+                            ? "Common"
+                            : (item.rarity && item.rarity.toLowerCase() !== "common"
+                                ? normalizeRarity(item.rarity)
+                                : (refMatch?.rarity ? normalizeRarity(refMatch.rarity) : normalizeRarity(item.rarity || "Common")));
+                          const isMagic = !isMundane && ["uncommon", "rare", "very rare", "legendary", "artifact"].includes(effectiveRarity.toLowerCase());
+                          const displayDesc = item.description || refMatch?.description || "";
+                          
+                          const rarityTextColor: Record<string, string> = {
+                            common: "text-zinc-500",
+                            uncommon: "text-emerald-400 font-bold",
+                            rare: "text-blue-400 font-bold",
+                            "very rare": "text-purple-400 font-bold",
+                            legendary: "text-amber-400 font-bold",
+                            artifact: "text-rose-400 font-bold"
+                          };
+
                           return (
                             <div 
                               key={idx} 
@@ -2861,10 +3015,15 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
                                         Attuned
                                       </span>
                                     )}
+                                    {refMatch && (
+                                      <span className="text-[7px] uppercase tracking-wider px-1 py-0.2 bg-emerald-950/30 text-emerald-300 border border-emerald-500/20 rounded font-mono shrink-0">
+                                        5e SRD
+                                      </span>
+                                    )}
                                   </div>
-                                  {item.description && (
-                                    <span className="text-[10px] text-zinc-500 line-clamp-1 leading-normal" title={item.description}>
-                                      {item.description}
+                                  {displayDesc && (
+                                    <span className="text-[10px] text-zinc-500 line-clamp-2 leading-normal" title={displayDesc}>
+                                      {displayDesc}
                                     </span>
                                   )}
                                 </div>
@@ -2873,8 +3032,8 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
                                 </span>
                               </div>
                               <div className="flex items-center justify-between text-[9px] font-mono text-zinc-550 mt-1 pt-1 border-t border-zinc-850/30">
-                                <span className={isMagic ? "text-purple-400 font-bold capitalize" : "text-zinc-500"}>
-                                  {item.rarity || "Common"}
+                                <span className={rarityTextColor[effectiveRarity.toLowerCase()] || "text-zinc-500"}>
+                                  {effectiveRarity}
                                 </span>
                                 {item.weight !== undefined && (
                                   <span>{item.weight} lbs</span>
@@ -3651,6 +3810,408 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
           </motion.div>
         </div>
       )}
+
+      {/* LEGENDARY TREASURES ITEMIZATION MODAL */}
+      <AnimatePresence>
+        {showTreasuresModal && (
+          <div 
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5"
+            onClick={() => setShowTreasuresModal(false)}
+            id="legendary-treasures-modal-overlay"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              transition={{ duration: 0.18 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-zinc-950 border border-purple-500/30 rounded-xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-[0_20px_50px_rgba(168,85,247,0.15)] relative overflow-hidden"
+              id="legendary-treasures-modal-content"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-zinc-850 px-5 py-4 bg-zinc-900/60 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-purple-500/15 border border-purple-500/30 rounded-lg text-purple-400 flex items-center justify-center shadow-inner">
+                    <Gem className="w-5 h-5 text-purple-400" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-fantasy font-black text-zinc-100 text-base tracking-wider uppercase">
+                        Party Legendary Treasures & Relics
+                      </h3>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-950 text-purple-300 border border-purple-500/30 font-bold">
+                        {(() => {
+                          const allItems: { name: string; heroName: string }[] = [];
+                          heroesList.forEach(h => {
+                            (h.magicItems || []).forEach(item => {
+                              allItems.push({ name: item, heroName: h.name });
+                            });
+                          });
+                          return `${allItems.length} Attuned`;
+                        })()}
+                      </span>
+                    </div>
+                    <p className="text-zinc-400 text-xs font-sans mt-0.5">
+                      Itemized compendium of magical relics, artifacts, and attuned gear across all companions
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowTreasuresModal(false)}
+                  className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-850 rounded-lg transition cursor-pointer"
+                  title="Close Reliquary"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Controls: Search and Hero filter */}
+              <div className="p-4 border-b border-zinc-850/80 bg-zinc-905 flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center justify-between shrink-0">
+                <div className="relative flex-1">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={treasureSearch}
+                    onChange={(e) => setTreasureSearch(e.target.value)}
+                    placeholder="Search treasures by name, property, or wielder..."
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 font-sans"
+                  />
+                  {treasureSearch && (
+                    <button
+                      onClick={() => setTreasureSearch("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 text-xs"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <Filter className="w-3.5 h-3.5 text-zinc-500" />
+                  <select
+                    value={treasureHeroFilter}
+                    onChange={(e) => setTreasureHeroFilter(e.target.value)}
+                    className="bg-zinc-900 border border-zinc-800 text-zinc-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-purple-500 font-sans cursor-pointer"
+                  >
+                    <option value="all">All Companions ({heroesList.length})</option>
+                    {heroesList.map(h => (
+                      <option key={h.id} value={h.id}>
+                        {h.name} ({(h.magicItems || []).length} items)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Itemized List Body */}
+              <div className="p-5 overflow-y-auto max-h-[60vh] space-y-3.5">
+                {(() => {
+                  interface ItemDetail {
+                    name: string;
+                    heroId: string;
+                    heroName: string;
+                    heroClass: string;
+                    heroAvatar?: string;
+                    resolvedRarity: string;
+                    resolvedType: string;
+                    resolvedDescription: string;
+                    sourceBadge?: string;
+                    isVerifiedRef: boolean;
+                    weight?: number;
+                    quantity?: number;
+                    equipped?: boolean;
+                    boundDate?: string;
+                    chronicledNotes?: string;
+                  }
+
+                  const allTreasures: ItemDetail[] = [];
+                  const seenHeroItems = new Set<string>();
+
+                  heroesList.forEach(hero => {
+                    if (treasureHeroFilter !== "all" && hero.id !== treasureHeroFilter) return;
+
+                    const heroClassStr = hero.classes && hero.classes.length > 0 
+                      ? hero.classes.map(c => `${c.className} ${c.level}`).join(" / ")
+                      : `Level ${hero.level}`;
+
+                    // 1. Process named magic items from hero
+                    (hero.magicItems || []).forEach(itemName => {
+                      const trimmed = itemName.trim();
+                      if (!trimmed) return;
+                      const clean = cleanItemKey(trimmed);
+                      if (!clean || isMundaneEquipment(trimmed)) return;
+
+                      // Prevent duplicate listing of the same relic for this companion
+                      const heroItemKey = `${hero.id}::${clean}`;
+                      if (seenHeroItems.has(heroItemKey)) return;
+                      seenHeroItems.add(heroItemKey);
+
+                      // Confirm with character sheet inventory records using EXACT clean match
+                      const invMatch = (hero.inventory || []).find(inv => 
+                        cleanItemKey(inv.name) === clean
+                      );
+
+                      // Confirm with official online / SRD reference materials
+                      const refMatch = verifiedReferenceItems[clean] || getMagicItemReference(trimmed);
+
+                      // Confirm with character history/progression notes
+                      const historyMatch = (hero.history || []).find(hist => 
+                        hist.type === "magic_item" && cleanItemKey(hist.value) === clean
+                      );
+
+                      let finalRarity = "Uncommon";
+                      let sourceBadge = "Companion Sheet";
+                      let isVerified = false;
+
+                      if (refMatch && refMatch.rarity) {
+                        finalRarity = normalizeRarity(refMatch.rarity);
+                        sourceBadge = refMatch.source || "5e Official Reference";
+                        isVerified = true;
+                      } else if (invMatch?.rarity && invMatch.rarity.toLowerCase() !== "common") {
+                        finalRarity = normalizeRarity(invMatch.rarity);
+                        sourceBadge = "D&D Beyond Character Sheet";
+                      } else if (invMatch?.rarity) {
+                        finalRarity = normalizeRarity(invMatch.rarity);
+                      }
+
+                      const finalDesc = refMatch?.description || 
+                        invMatch?.description || 
+                        historyMatch?.notes || 
+                        `Attuned magical relic bound to ${hero.name}. Verify properties and active charges in companion spellbook or gear log.`;
+
+                      const finalType = refMatch?.type || invMatch?.type || "Wondrous Item";
+
+                      allTreasures.push({
+                        name: trimmed,
+                        heroId: hero.id,
+                        heroName: hero.name,
+                        heroClass: heroClassStr,
+                        heroAvatar: hero.avatarUrl,
+                        resolvedRarity: finalRarity,
+                        resolvedType: finalType,
+                        resolvedDescription: finalDesc,
+                        sourceBadge,
+                        isVerifiedRef: isVerified,
+                        weight: invMatch?.weight,
+                        quantity: invMatch?.quantity,
+                        equipped: invMatch?.equipped,
+                        boundDate: historyMatch?.date,
+                        chronicledNotes: historyMatch?.notes
+                      });
+                    });
+
+                    // 2. Also check for attuned or magical inventory items not listed in magicItems array
+                    (hero.inventory || []).forEach(inv => {
+                      if (!inv || !inv.name) return;
+                      const clean = cleanItemKey(inv.name);
+                      if (!clean || isMundaneEquipment(inv.name)) return;
+
+                      const heroItemKey = `${hero.id}::${clean}`;
+                      if (seenHeroItems.has(heroItemKey)) return;
+
+                      const isMagicRarity = ["uncommon", "rare", "very rare", "legendary", "artifact"].includes((inv.rarity || "").toLowerCase());
+                      const refMatch = verifiedReferenceItems[clean] || getMagicItemReference(inv.name);
+
+                      if (inv.isAttuned || isMagicRarity || refMatch) {
+                        seenHeroItems.add(heroItemKey);
+                        const finalRarity = refMatch?.rarity 
+                          ? normalizeRarity(refMatch.rarity) 
+                          : (inv.rarity && inv.rarity.toLowerCase() !== "common" ? normalizeRarity(inv.rarity) : "Uncommon");
+                        const finalDesc = refMatch?.description || inv.description || `Attuned magic item equipped by ${hero.name}.`;
+                        const finalType = refMatch?.type || inv.type || "Wondrous Item";
+
+                        allTreasures.push({
+                          name: inv.name,
+                          heroId: hero.id,
+                          heroName: hero.name,
+                          heroClass: heroClassStr,
+                          heroAvatar: hero.avatarUrl,
+                          resolvedRarity: finalRarity,
+                          resolvedType: finalType,
+                          resolvedDescription: finalDesc,
+                          sourceBadge: refMatch ? (refMatch.source || "5e Official Reference") : "D&D Beyond Character Sheet",
+                          isVerifiedRef: !!refMatch,
+                          weight: inv.weight,
+                          quantity: inv.quantity,
+                          equipped: inv.equipped
+                        });
+                      }
+                    });
+                  });
+
+                  // Filter by search query
+                  const query = treasureSearch.trim().toLowerCase();
+                  const filtered = allTreasures.filter(t => {
+                    if (!query) return true;
+                    return (
+                      t.name.toLowerCase().includes(query) ||
+                      t.heroName.toLowerCase().includes(query) ||
+                      t.resolvedRarity.toLowerCase().includes(query) ||
+                      t.resolvedType.toLowerCase().includes(query) ||
+                      t.resolvedDescription.toLowerCase().includes(query) ||
+                      (t.chronicledNotes && t.chronicledNotes.toLowerCase().includes(query))
+                    );
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="py-12 text-center space-y-3 font-sans">
+                        <div className="w-12 h-12 rounded-full bg-purple-950/40 border border-purple-500/20 text-purple-400 flex items-center justify-center mx-auto">
+                          <Gem className="w-6 h-6 opacity-60" />
+                        </div>
+                        <div className="space-y-1">
+                          <h4 className="text-sm font-semibold text-zinc-300">
+                            {allTreasures.length === 0 ? "No Magic Items Attuned Yet" : "No Matching Items Found"}
+                          </h4>
+                          <p className="text-xs text-zinc-500 max-w-sm mx-auto">
+                            {allTreasures.length === 0 
+                              ? "As your companions discover artifacts and attune to magical gear, their items will be indexed here with accurate 5e rarity, verified descriptions, and wielder chronicles."
+                              : "Try broadening your search term or selecting 'All Companions'."}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="grid grid-cols-1 gap-3">
+                      {filtered.map((item, idx) => {
+                        const rarity = item.resolvedRarity;
+                        const rarityColors: Record<string, string> = {
+                          common: "text-zinc-300 bg-zinc-800/60 border-zinc-700",
+                          uncommon: "text-emerald-300 bg-emerald-950/50 border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.1)]",
+                          rare: "text-blue-300 bg-blue-950/50 border-blue-500/40 shadow-[0_0_10px_rgba(59,130,246,0.1)]",
+                          "very rare": "text-purple-300 bg-purple-950/50 border-purple-500/40 shadow-[0_0_10px_rgba(168,85,247,0.1)]",
+                          legendary: "text-amber-300 bg-amber-950/50 border-amber-500/40 shadow-[0_0_10px_rgba(245,158,11,0.15)]",
+                          artifact: "text-red-300 bg-red-950/50 border-red-500/40 shadow-[0_0_10px_rgba(239,68,68,0.2)]"
+                        };
+                        const rarityBadgeClass = rarityColors[rarity.toLowerCase()] || "text-purple-300 bg-purple-950/40 border-purple-500/30";
+
+                        return (
+                          <div
+                            key={`${item.heroId}-${item.name}-${idx}`}
+                            className="p-4 bg-zinc-900/60 hover:bg-zinc-900/90 border border-zinc-800 hover:border-purple-500/40 rounded-xl transition-all duration-200 space-y-2.5 group"
+                          >
+                            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                              <div className="space-y-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <div className="p-1 bg-purple-500/10 text-purple-400 rounded border border-purple-500/20 shrink-0">
+                                    <Gem className="w-3.5 h-3.5" />
+                                  </div>
+                                  <h4 className="text-sm font-serif font-bold text-zinc-100 group-hover:text-purple-200 transition-colors">
+                                    {item.name}
+                                  </h4>
+                                  <span className={`text-[9px] font-mono px-2 py-0.5 rounded-full border uppercase font-bold tracking-wider ${rarityBadgeClass}`}>
+                                    {rarity}
+                                  </span>
+                                  {item.resolvedType && (
+                                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-850 text-zinc-400 border border-zinc-750">
+                                      {item.resolvedType}
+                                    </span>
+                                  )}
+                                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50 flex items-center gap-1 font-semibold">
+                                    <Sparkles className="w-2.5 h-2.5 text-purple-400" /> Attuned
+                                  </span>
+                                  {item.isVerifiedRef && (
+                                    <span 
+                                      className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/50 flex items-center gap-1 font-semibold"
+                                      title="Verified against official D&D 5e System Reference Document"
+                                    >
+                                      <Check className="w-2.5 h-2.5 text-emerald-400" /> 5e SRD Verified
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Wielder Tag / Quick View Hero Button */}
+                              <button
+                                onClick={() => {
+                                  setSelectedHeroId(item.heroId);
+                                  setShowTreasuresModal(false);
+                                }}
+                                className="inline-flex items-center gap-2 px-2.5 py-1 bg-zinc-950/80 hover:bg-purple-950/50 border border-zinc-800 hover:border-purple-500/40 rounded-lg text-xs transition cursor-pointer shrink-0 self-start sm:self-auto"
+                                title={`Open ${item.heroName}'s character sheet`}
+                              >
+                                {item.heroAvatar ? (
+                                  <img 
+                                    src={item.heroAvatar} 
+                                    alt={item.heroName} 
+                                    className="w-4 h-4 rounded-full object-cover shrink-0 border border-zinc-700" 
+                                  />
+                                ) : (
+                                  <User className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                                )}
+                                <span className="font-semibold text-zinc-200 text-[11px] group-hover:text-purple-300">
+                                  {item.heroName}
+                                </span>
+                                <span className="text-[10px] text-zinc-500 font-mono hidden md:inline">
+                                  ({item.heroClass})
+                                </span>
+                                <ChevronRight className="w-3 h-3 text-zinc-500 group-hover:translate-x-0.5 transition-transform" />
+                              </button>
+                            </div>
+
+                            {/* Verified Description / Rules Text */}
+                            <div className="text-xs text-zinc-300 font-sans leading-relaxed bg-zinc-950/60 p-3 rounded-lg border border-zinc-850/70 whitespace-pre-line">
+                              {item.resolvedDescription}
+                            </div>
+
+                            {/* Item Meta Footer: Reference source, Weight, discovery date, quantity */}
+                            <div className="flex items-center justify-between gap-3 text-[10px] font-mono text-zinc-400 pt-1 flex-wrap">
+                              <div className="flex items-center gap-3 flex-wrap">
+                                {item.weight !== undefined && (
+                                  <span className="flex items-center gap-1">
+                                    <Briefcase className="w-3 h-3 text-zinc-500" />
+                                    <span>{item.weight} lbs</span>
+                                  </span>
+                                )}
+                                {item.quantity !== undefined && item.quantity > 1 && (
+                                  <span>Qty: {item.quantity}</span>
+                                )}
+                                {item.boundDate && (
+                                  <span className="flex items-center gap-1 text-zinc-500">
+                                    <Calendar className="w-3 h-3 text-zinc-600" />
+                                    <span>Bound on: {item.boundDate}</span>
+                                  </span>
+                                )}
+                                {item.equipped && (
+                                  <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                                    <Shield className="w-3 h-3" /> Equipped
+                                  </span>
+                                )}
+                              </div>
+
+                              {item.sourceBadge && (
+                                <span className="text-zinc-500 italic text-[9px] flex items-center gap-1">
+                                  <Info className="w-3 h-3 text-zinc-600" /> Source: {item.sourceBadge}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="border-t border-zinc-850 px-5 py-3.5 bg-zinc-900/60 flex items-center justify-between gap-3 shrink-0">
+                <div className="text-[11px] font-sans text-zinc-400">
+                  Tip: Click any companion's name to jump directly to their sheet to manage or add new relics.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTreasuresModal(false)}
+                  className="px-4 py-1.5 bg-zinc-850 hover:bg-zinc-800 text-zinc-200 border border-zinc-750 text-xs font-semibold rounded-lg transition cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );
