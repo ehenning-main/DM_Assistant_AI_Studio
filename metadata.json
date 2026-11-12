@@ -1,6 +1,6 @@
 {
   "name": "Dungeon Master Assistant",
-  "description": "A comprehensive tool for Dungeon Masters to track game sessions with multi-file audio analysis, automatic chronological timestamp ordering, Google Drive integration, multi-hour recordings (up to 6 hours), voice-to-character matching, full transcripts, in-game and out-of-character key moment extraction, written logging, and 3-source integrated AI chronicles.",
-  "requestFramePermissions": ["microphone"],
+  "description": "A comprehensive tool for Dungeon Masters to track game sessions with DM scribe logging, player journals, PC hero rosters, NPC records, campaign lore archives, and AI-powered master chronicles.",
+  "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
