@@ -75,23 +75,14 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 let cachedAccessToken: string | null = null;
 let isSigningIn = false;
 
-// Create configured GoogleAuthProvider with Drive scopes: read (import recordings) and per-file write
-// (back up session audio and transcripts the app creates; drive.file can't see other files).
-export function getGoogleDriveAuthProvider(): GoogleAuthProvider {
-  const provider = new GoogleAuthProvider();
-  provider.addScope("https://www.googleapis.com/auth/drive.readonly");
-  provider.addScope("https://www.googleapis.com/auth/drive.file");
-  return provider;
-}
-
-// Google Login Pop-up Trigger with Drive Scopes & Token Acquisition
+// Google Login Pop-up Trigger with Token Acquisition
 export async function logInWithGoogle(): Promise<{ user: any; accessToken: string | null }> {
   if (!isRealFirebase || !auth) {
     throw new Error("Cloud auth triggers are inactive in Local mode.");
   }
   isSigningIn = true;
   try {
-    const provider = getGoogleDriveAuthProvider();
+    const provider = new GoogleAuthProvider();
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (credential?.accessToken) {
@@ -109,15 +100,6 @@ export async function logInWithGoogle(): Promise<{ user: any; accessToken: strin
 // Get the current cached Google OAuth access token
 export async function getGoogleAccessToken(): Promise<string | null> {
   return cachedAccessToken;
-}
-
-// Explicit function to request/refresh Drive access token
-export async function requestDriveAccessToken(): Promise<string | null> {
-  if (cachedAccessToken) {
-    return cachedAccessToken;
-  }
-  const result = await logInWithGoogle();
-  return result.accessToken;
 }
 
 // Initialize auth state listener conforming to workspace integration standard

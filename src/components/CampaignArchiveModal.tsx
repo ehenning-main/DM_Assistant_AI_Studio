@@ -14,7 +14,7 @@ import {
   Users,
   Sparkles,
   Image,
-  Mic,
+  Shield,
   Loader2,
   FileText,
   HardDrive,
@@ -318,8 +318,8 @@ export function CampaignArchiveModal({
                           <span>Illustrated Highlights &amp; Vector Art</span>
                         </div>
                         <div className="p-2.5 bg-zinc-900/50 border border-zinc-850/80 rounded flex items-center gap-2 text-zinc-300">
-                          <Mic className="w-4 h-4 text-red-400 shrink-0" />
-                          <span>Audio Transcripts &amp; Moment Timestamps</span>
+                          <Shield className="w-4 h-4 text-red-400 shrink-0" />
+                          <span>Official Canon Decrees &amp; Lore Decisions</span>
                         </div>
                       </div>
                     </div>

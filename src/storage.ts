@@ -26,14 +26,6 @@ function cleanUndefined(obj: any): any {
   return result;
 }
 
-// Long transcripts are flagged linesStoredLocally and kept in IndexedDB; never write their lines to the
-// session document, whichever code path saves the session.
-function stripDeviceOnlyData(session: Session): Session {
-  if (session.capture?.linesStoredLocally && session.capture.lines.length > 0) {
-    return { ...session, capture: { ...session.capture, lines: [] } };
-  }
-  return session;
-}
 
 // Fetches all campaigns associated with the DM
 export async function fetchAllCampaigns(userId: string): Promise<Campaign[]> {
@@ -219,8 +211,7 @@ export async function fetchAllSessions(userId: string): Promise<Session[]> {
 }
 
 // Persists a newly created campaign session log
-export async function createNewSession(sessionInput: Session): Promise<void> {
-  const session = stripDeviceOnlyData(sessionInput);
+export async function createNewSession(session: Session): Promise<void> {
   const timestampISO = new Date().toISOString();
   if (isRealFirebase && db && session.userId !== "local_guest_dm") {
     const path = `sessions/${session.id}`;
@@ -248,8 +239,7 @@ export async function createNewSession(sessionInput: Session): Promise<void> {
 }
 
 // Saves changes to an existing campaign session
-export async function updateExistingSession(sessionInput: Session): Promise<void> {
-  const session = stripDeviceOnlyData(sessionInput);
+export async function updateExistingSession(session: Session): Promise<void> {
   const timestampISO = new Date().toISOString();
   if (isRealFirebase && db && session.userId !== "local_guest_dm") {
     const path = `sessions/${session.id}`;

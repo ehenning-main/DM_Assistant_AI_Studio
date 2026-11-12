@@ -12,7 +12,6 @@ export interface CampaignArchiveData {
     totalHeroes: number;
     totalCharacters: number;
     totalHighlights: number;
-    hasAudioNotesCount: number;
     hasAiSummariesCount: number;
     earliestSessionDate?: string;
     latestSessionDate?: string;
@@ -47,7 +46,6 @@ export function buildCampaignArchive(campaign: Campaign, allSessions: Session[])
   // Calculate statistics
   let totalCharacters = 0;
   let totalHighlights = 0;
-  let hasAudioNotesCount = 0;
   let hasAiSummariesCount = 0;
   const dates: number[] = [];
 
@@ -57,9 +55,6 @@ export function buildCampaignArchive(campaign: Campaign, allSessions: Session[])
     }
     if (s.highlights && Array.isArray(s.highlights)) {
       totalHighlights += s.highlights.length;
-    }
-    if (s.audioSessionNotes || s.audioTranscription) {
-      hasAudioNotesCount++;
     }
     if (s.summary && s.summary.trim().length > 0) {
       hasAiSummariesCount++;
@@ -87,7 +82,6 @@ export function buildCampaignArchive(campaign: Campaign, allSessions: Session[])
       totalHeroes: campaign.heroes?.length || 0,
       totalCharacters,
       totalHighlights,
-      hasAudioNotesCount,
       hasAiSummariesCount,
       earliestSessionDate,
       latestSessionDate,
@@ -177,9 +171,6 @@ export function validateAndParseArchive(rawInput: string | any): {
       date: s.date || new Date().toISOString().split("T")[0],
       notes: s.notes || "",
       playerNotes: s.playerNotes || "",
-      audioUrl: s.audioUrl,
-      audioTranscription: s.audioTranscription,
-      audioSessionNotes: s.audioSessionNotes,
       summary: s.summary || "",
       videoUrl: s.videoUrl,
       videoOperationName: s.videoOperationName,

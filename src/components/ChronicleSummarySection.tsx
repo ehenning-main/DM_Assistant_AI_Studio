@@ -250,7 +250,7 @@ export function ChronicleSummarySection({
               <span className="font-bold font-fantasy tracking-wide text-amber-400 block mb-0.5">
                 PROGRAM CORRECTION & SPELLBOOK CHRONICLE EDITOR
               </span>
-              Correct any AI transcription errors, adjust character spell names or dice rolls, add missing plot hooks, or format with markdown. All changes save directly to your session chronicle.
+              Adjust narrative details, character spell names or dice rolls, add missing plot hooks, or format with markdown. All changes save directly to your session chronicle.
             </div>
           </div>
 

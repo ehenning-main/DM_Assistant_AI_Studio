@@ -307,8 +307,8 @@ export function CharacterTracker({
 
   // Action: Trigger AI NPC & PC Hero detection from chronicle
   async function handleAutoDetectNPCs() {
-    if (!session?.summary && !session?.notes && !session?.audioTranscription) {
-      setDetectionError("The chronicler requires some text (Chronicle Summary, written notes, or transcription) to analyze for NPC and Hero souls.");
+    if (!session?.summary && !session?.notes) {
+      setDetectionError("The chronicler requires some text (Chronicle Summary or written notes) to analyze for NPC and Hero souls.");
       return;
     }
 
@@ -324,7 +324,6 @@ export function CharacterTracker({
         body: JSON.stringify({
           summary: session.summary,
           notes: session.notes,
-          audioTranscription: session.audioTranscription,
           existingHeroes: (campaignHeroes || []).map((h) => ({
             name: h.name,
             level: h.level,

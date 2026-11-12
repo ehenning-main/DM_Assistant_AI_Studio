@@ -595,8 +595,16 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
     setEditCon(currentHero.constitution || 10);
     setEditInt(currentHero.intelligence || 10);
     setEditWis(currentHero.wisdom || 10);
-    setEditCha(currentHero.charisma || 10);
-    setEditMagicItems([...(currentHero.magicItems || [])]);
+    const seenEdit = new Set<string>();
+    const cleanedEditItems: string[] = [];
+    (currentHero.magicItems || []).forEach(m => {
+      const clean = cleanItemKey(m);
+      if (clean && !seenEdit.has(clean) && !isMundaneEquipment(m)) {
+        seenEdit.add(clean);
+        cleanedEditItems.push(m);
+      }
+    });
+    setEditMagicItems(cleanedEditItems);
     setEditHeroDndBeyondUrl(currentHero.dndBeyondUrl || "");
     
     // Initialize editClasses from currentHero.classes, or fallback to current single class type
@@ -1272,7 +1280,11 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
     let updatedMaxHp = currentHero.maxHp;
 
     if (progressModalType === "magic_item") {
-      updatedMagicItems.push(progressValue.trim());
+      const val = progressValue.trim();
+      const clean = cleanItemKey(val);
+      if (clean && !updatedMagicItems.some(i => cleanItemKey(i) === clean)) {
+        updatedMagicItems.push(val);
+      }
     } else if (progressModalType === "level") {
       // Find numeric level to set if any
       const levelNum = parseInt(progressValue.replace(/\D/g, ""));
@@ -1677,7 +1689,14 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
                 <span className="text-[9px] px-1.5 py-0.2 bg-purple-950/60 text-purple-300 border border-purple-500/30 rounded font-mono font-normal">View Compendium</span>
               </div>
               <div className="text-xl font-fantasy font-black text-zinc-100 group-hover:text-purple-200 transition-colors tracking-wide">
-                {heroesList.reduce((acc, h) => acc + (h.magicItems?.length || 0), 0)} Attuned
+                {heroesList.reduce((acc, h) => {
+                  const seen = new Set<string>();
+                  (h.magicItems || []).forEach(m => {
+                    const clean = cleanItemKey(m);
+                    if (clean && !isMundaneEquipment(m)) seen.add(clean);
+                  });
+                  return acc + seen.size;
+                }, 0)} Attuned
               </div>
             </div>
           </div>
