@@ -20,6 +20,8 @@ function cleanItemKey(name: string): string {
 interface HeroPartyTrackerProps {
   campaign: Campaign;
   onUpdateCampaign: (updatedCampaign: Campaign) => Promise<void>;
+  selectedHeroId?: string | null;
+  onSelectHero?: (heroId: string | null) => void;
 }
 
 // Preset D&D classes for quick templating
@@ -33,13 +35,30 @@ const CLASS_TEMPLATES = [
   { classType: "Druid", hp: 8, ac: 14, mainStat: "Wisdom", strength: 10, dexterity: 12, constitution: 14, intelligence: 10, wisdom: 16, charisma: 10, desc: "A priest of the Old Faith, wielding the elemental powers of nature and shape." },
 ];
 
-export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTrackerProps) {
+export function HeroPartyTracker({
+  campaign,
+  onUpdateCampaign,
+  selectedHeroId: controlledSelectedHeroId,
+  onSelectHero,
+}: HeroPartyTrackerProps) {
   const heroesList = campaign.heroes || [];
 
   // Navigation / Selection States
-  const [selectedHeroId, setSelectedHeroId] = useState<string | null>(
+  const [internalSelectedHeroId, setInternalSelectedHeroId] = useState<string | null>(
     heroesList.length > 0 ? heroesList[0].id : null
   );
+  const selectedHeroId =
+    controlledSelectedHeroId !== undefined
+      ? (heroesList.some((h) => h.id === controlledSelectedHeroId)
+          ? controlledSelectedHeroId
+          : heroesList.length > 0
+            ? heroesList[0].id
+            : null)
+      : internalSelectedHeroId;
+  const setSelectedHeroId = (heroId: string | null) => {
+    setInternalSelectedHeroId(heroId);
+    onSelectHero?.(heroId);
+  };
 
   // Modal / Drawer States
   const [showAddHeroModal, setShowAddHeroModal] = useState(false);
@@ -192,6 +211,8 @@ export function HeroPartyTracker({ campaign, onUpdateCampaign }: HeroPartyTracke
   const [currentSelectedHeroId, setCurrentSelectedHeroId] = useState<string | null>(selectedHeroId);
   if (selectedHeroId !== currentSelectedHeroId) {
     setCurrentSelectedHeroId(selectedHeroId);
+    setIsEditingState(false);
+    setShowDeleteConfirm(false);
     setHeroSyncError(null);
     setHeroSyncSuccess(null);
     setHeroPastedHtml("");

@@ -1,10 +1,8 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { exec } from "child_process";
 import dotenv from "dotenv";
 import { GenerateVideosOperation, Type } from "@google/genai";
-import { createServer as createViteServer } from "vite";
 import { getAi, generateContentWithRetry, extractJsonText } from "./server/gemini";
 
 dotenv.config();
@@ -1979,11 +1977,26 @@ ${text}
 async function startServer() {
   try {
     if (process.env.NODE_ENV !== "production") {
-      const vite = await createViteServer({
-        server: { middlewareMode: true },
-        appType: "spa",
+      const vitePromise = import("vite")
+        .then(({ createServer: createViteServer }) =>
+          createViteServer({
+            server: { middlewareMode: true },
+            appType: "spa",
+          })
+        )
+        .catch((err) => {
+          console.error("Failed to initialize Vite dev server:", err);
+          process.exit(1);
+        });
+
+      app.use(async (req, res, next) => {
+        try {
+          const vite = await vitePromise;
+          vite.middlewares(req, res, next);
+        } catch (err) {
+          next(err);
+        }
       });
-      app.use(vite.middlewares);
     } else {
       const distPath = path.join(process.cwd(), "dist");
       app.use(express.static(distPath));
@@ -1993,11 +2006,16 @@ async function startServer() {
       });
     }
 
-    app.listen(PORT, "0.0.0.0", () => {
+    const server = app.listen(PORT, "0.0.0.0", () => {
       console.log(`Dungeon Master Companion backend online on port: ${PORT}`);
+    });
+    server.on("error", (err) => {
+      console.error("Server failed to listen:", err);
+      process.exit(1);
     });
   } catch (err) {
     console.error("Failed to start server:", err);
+    process.exit(1);
   }
 }
 
