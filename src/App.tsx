@@ -102,6 +102,7 @@ export default function App() {
   const [notesSaving, setNotesSaving] = useState(false);
   const [activeNoteTab, setActiveNoteTab] = useState<"dm" | "player">("dm");
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"chapters" | "party">("chapters");
+  const [selectedHeroId, setSelectedHeroId] = useState<string | null>(null);
   const [isLoreExpanded, setIsLoreExpanded] = useState(false);
   const [sessionSortMode, setSessionSortMode] = useState<"date-desc" | "date-asc" | "name-asc" | "name-desc" | "manual">(() => {
     return (localStorage.getItem("session_sort_mode") as any) || "date-desc";
@@ -220,6 +221,7 @@ export default function App() {
 
   async function handleSelectCampaign(campId: string) {
     setSelectedCampaignId(campId);
+    setSelectedHeroId(null);
     
     // Filter sessions active for this campaign
     const campSessions = sessions.filter((s) => s.campaignId === campId);
@@ -694,7 +696,7 @@ export default function App() {
           </div>
 
           <p className="text-zinc-400 text-xs sm:text-sm font-sans leading-relaxed">
-            Record session soundtracks, catalog improvisational NPCs, paint gorgeous concept highlights, and auto-synthesize summaries using high-performance Gemini intelligence.
+            Chronicle session logs, catalog improvisational NPCs, paint gorgeous concept highlights, and auto-synthesize summaries using high-performance Gemini intelligence.
           </p>
 
           <div className="space-y-3 pt-3">
@@ -1236,28 +1238,54 @@ export default function App() {
                       </div>
                     );
                   }
-                  return campaignHeroes.map((hero) => (
-                    <div
-                      key={hero.id}
-                      className="p-3 bg-zinc-900/40 border border-zinc-850 rounded text-xs text-zinc-300 flex items-center justify-between"
-                    >
-                      <div className="min-w-0 pr-2">
-                        <h4 className="font-fantasy font-bold text-xs truncate text-zinc-200">
-                          {hero.name}
-                        </h4>
-                        <p className="text-[10px] text-zinc-550 font-mono truncate">
-                          {hero.classes && hero.classes.length > 0 
-                            ? hero.classes.map(c => `${c.className} (Lv ${c.level})`).join(" / ")
-                            : `${hero.classType} (Lv ${hero.level})`}
-                        </p>
-                      </div>
-                      <div className="shrink-0 text-right font-mono text-[10px] bg-zinc-950 px-1.5 py-0.5 border border-zinc-850 rounded text-red-400 font-bold">
-                        Lv {hero.classes && hero.classes.length > 0 
-                          ? hero.classes.reduce((acc, c) => acc + c.level, 0)
-                          : hero.level}
-                      </div>
-                    </div>
-                  ));
+                  const activeSidebarHeroId =
+                    selectedHeroId && campaignHeroes.some((h) => h.id === selectedHeroId)
+                      ? selectedHeroId
+                      : campaignHeroes[0]?.id ?? null;
+
+                  return campaignHeroes.map((hero) => {
+                    const isSelected = activeSidebarHeroId === hero.id;
+                    return (
+                      <button
+                        type="button"
+                        key={hero.id}
+                        onClick={() => {
+                          setSelectedHeroId(hero.id);
+                          requestAnimationFrame(() => {
+                            document
+                              .getElementById("hero-detail-workspace")
+                              ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                          });
+                        }}
+                        className={`group w-full p-3 text-left rounded border transition flex items-center justify-between cursor-pointer ${
+                          isSelected
+                            ? "bg-red-500/10 border-red-500/40 text-red-400 parchment-glow"
+                            : "bg-zinc-900/40 border-zinc-850 hover:bg-zinc-900 hover:border-zinc-700 text-zinc-300"
+                        }`}
+                        id={`side-hero-${hero.id}`}
+                        title={`View ${hero.name} character details`}
+                      >
+                        <div className="min-w-0 pr-2 flex-1">
+                          <h4 className={`font-fantasy font-bold text-xs truncate ${isSelected ? "text-red-300" : "text-zinc-200"}`}>
+                            {hero.name}
+                          </h4>
+                          <p className="text-[10px] text-zinc-550 font-mono truncate">
+                            {hero.classes && hero.classes.length > 0 
+                              ? hero.classes.map(c => `${c.className} (Lv ${c.level})`).join(" / ")
+                              : `${hero.classType} (Lv ${hero.level})`}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <div className="text-right font-mono text-[10px] bg-zinc-950 px-1.5 py-0.5 border border-zinc-850 rounded text-red-400 font-bold">
+                            Lv {hero.classes && hero.classes.length > 0 
+                              ? hero.classes.reduce((acc, c) => acc + c.level, 0)
+                              : hero.level}
+                          </div>
+                          <ChevronRight className={`w-3.5 h-3.5 transition ${isSelected ? "text-red-400" : "text-zinc-600 group-hover:text-red-500"}`} />
+                        </div>
+                      </button>
+                    );
+                  });
                 })()}
               </div>
             </div>
@@ -1325,6 +1353,8 @@ export default function App() {
           {selectedCampaignId && activeWorkspaceTab === "party" ? (
             <HeroPartyTracker
               campaign={campaigns.find((c) => c.id === selectedCampaignId)!}
+              selectedHeroId={selectedHeroId}
+              onSelectHero={setSelectedHeroId}
               onUpdateCampaign={async (updated) => {
                 try {
                   await updateExistingCampaign(updated);
