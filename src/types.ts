@@ -45,6 +45,65 @@ export interface CampaignPlayer {
   characterName?: string;
 }
 
+export type NpcCampaignStatus =
+  | "Active"
+  | "Allied"
+  | "Missing"
+  | "Captured"
+  | "Hostile"
+  | "Deceased"
+  | "Unknown";
+
+export type PartyStanding =
+  | "Trusted Ally"
+  | "Friendly"
+  | "Neutral"
+  | "Wary"
+  | "Hostile"
+  | "Sworn Enemy";
+
+export interface NpcToNpcRelationship {
+  id: string;
+  targetNpcName: string;
+  relationshipType: string;
+  notes?: string;
+}
+
+export interface NpcToHeroRelationship {
+  id: string;
+  targetType: "party" | "hero";
+  heroId?: string;
+  heroName: string;
+  standing: PartyStanding | string;
+  notes?: string;
+}
+
+export interface NpcRosterEntry {
+  id: string;
+  name: string;
+  aliases?: string[];
+  role: string;
+  description: string;
+  campaignStatus: NpcCampaignStatus | string;
+  statusNote?: string;
+  lastKnownLocation?: string;
+  partyStanding: PartyStanding | string;
+  partyRelationshipSummary?: string;
+  heroRelationships: NpcToHeroRelationship[];
+  npcRelationships: NpcToNpcRelationship[];
+  hp?: number;
+  ac?: number;
+  alignment?: string;
+  strength?: number;
+  dexterity?: number;
+  constitution?: number;
+  intelligence?: number;
+  wisdom?: number;
+  charisma?: number;
+  skills_or_actions?: string;
+  updatedAt?: string;
+}
+
 export interface Campaign {
   id: string;
   userId: string;
@@ -52,6 +111,7 @@ export interface Campaign {
   setting: string;
   description: string;
   heroes?: HeroCharacter[];
+  npcRoster?: NpcRosterEntry[];
   dndBeyondUrl?: string;
   dndBeyondNotes?: string;
   players?: CampaignPlayer[];

@@ -578,6 +578,150 @@ Ensure all fields are present and valid. Do not include wordy explanations or ma
   }
 });
 
+// 5b. Automated Cross-Session NPC Roster, Relationship & Campaign Status Synthesizer
+app.post("/api/analyze-npc-roster", async (req, res) => {
+  try {
+    const { campaignName, campaignSetting, campaignHeroes, sessions, existingNpcRoster } = req.body;
+
+    if (!sessions || !Array.isArray(sessions) || sessions.length === 0) {
+      res.status(400).json({ error: "No campaign sessions available to analyze." });
+      return;
+    }
+
+    const heroesSummary =
+      campaignHeroes && campaignHeroes.length > 0
+        ? campaignHeroes
+            .map(
+              (h: any) =>
+                `- ${h.name} (ID: ${h.id}, Level ${h.level || 1} ${h.race || ""} ${h.classType || "Hero"})`
+            )
+            .join("\n")
+        : "No individual heroes registered yet.";
+
+    const existingRosterSummary =
+      existingNpcRoster && existingNpcRoster.length > 0
+        ? existingNpcRoster
+            .map(
+              (n: any) =>
+                `- ${n.name} (${n.role}) | Current Status: ${n.campaignStatus} | Party Standing: ${n.partyStanding}`
+            )
+            .join("\n")
+        : "None recorded yet.";
+
+    const sessionsContext = sessions
+      .map((s: any, idx: number) => {
+        const npcList = (s.characters || [])
+          .map((c: any) => `  * ${c.name} [${c.role}]: ${c.description || "No description"}`)
+          .join("\n");
+        return `--- SESSION ${idx + 1}: ${s.title || "Untitled"} (${s.date || "Undated"}) ---
+Recorded NPCs in Chapter:
+${npcList || "  None"}
+Summary:
+${s.summary || "N/A"}
+DM Scribe Notes:
+${s.notes || "N/A"}
+Player Journal Notes:
+${s.playerNotes || "N/A"}`;
+      })
+      .join("\n\n");
+
+    const prompt = `
+You are an expert RPG campaign chronicler analyzing "${campaignName || "Campaign"}" (${campaignSetting || "D&D 5e"}).
+Review ALL sessions chronologically from earliest to latest and produce an authoritative NPC Roster capturing:
+1. Every named or distinct NPC who appeared or was meaningfully referenced across previous sessions.
+2. Their CURRENT status in the campaign as of the latest session ("Active", "Allied", "Missing", "Captured", "Hostile", "Deceased", or "Unknown"), plus a concise 1-sentence statusNote and lastKnownLocation if mentioned.
+3. Their relationship with the party as a whole (partyStanding: "Trusted Ally" | "Friendly" | "Neutral" | "Wary" | "Hostile" | "Sworn Enemy", plus partyRelationshipSummary) AND specific relationships with individual heroes from the Hero Roster (matching exact hero names where applicable).
+4. Relationships BETWEEN the NPCs (alliances, rivalries, family ties, faction hierarchy, betrayals, informants, patrons, etc.).
+
+=== PARTY HEROES ===
+${heroesSummary}
+
+=== EXISTING ROSTER ENTRIES (preserve/refine canonical names) ===
+${existingRosterSummary}
+
+=== CHRONICLE SESSIONS ===
+${sessionsContext}
+`;
+
+    const response = await generateContentWithRetry({
+      model: "gemini-4-hydrogen",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            npcs: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  role: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  campaignStatus: {
+                    type: Type.STRING,
+                    description: "One of: Active, Allied, Missing, Captured, Hostile, Deceased, Unknown",
+                  },
+                  statusNote: { type: Type.STRING },
+                  lastKnownLocation: { type: Type.STRING },
+                  partyStanding: {
+                    type: Type.STRING,
+                    description: "One of: Trusted Ally, Friendly, Neutral, Wary, Hostile, Sworn Enemy",
+                  },
+                  partyRelationshipSummary: { type: Type.STRING },
+                  heroRelationships: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        targetType: { type: Type.STRING, description: "party or hero" },
+                        heroName: { type: Type.STRING },
+                        standing: { type: Type.STRING },
+                        notes: { type: Type.STRING },
+                      },
+                      required: ["targetType", "heroName", "standing"],
+                    },
+                  },
+                  npcRelationships: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        targetNpcName: { type: Type.STRING },
+                        relationshipType: { type: Type.STRING },
+                        notes: { type: Type.STRING },
+                      },
+                      required: ["targetNpcName", "relationshipType"],
+                    },
+                  },
+                },
+                required: [
+                  "name",
+                  "role",
+                  "description",
+                  "campaignStatus",
+                  "partyStanding",
+                  "heroRelationships",
+                  "npcRelationships",
+                ],
+              },
+            },
+          },
+          required: ["npcs"],
+        },
+      },
+    });
+
+    const cleanText = extractJsonText(response.text || "{}");
+    const parsed = JSON.parse(cleanText);
+    res.json(parsed);
+  } catch (error: any) {
+    console.error("NPC roster analysis error:", error);
+    res.status(400).json({ error: error.message || "Failed to analyze NPC roster across sessions." });
+  }
+});
+
 // 6. DM Open Campaign Archive Search & Knowledge Oracle
 app.post("/api/query-campaign", async (req, res) => {
   try {
