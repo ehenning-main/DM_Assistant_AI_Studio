@@ -25,6 +25,10 @@
           "type": "string",
           "description": "Short description of the campaign arc"
         },
+        "npcRoster": {
+          "type": "array",
+          "description": "Campaign-wide NPC roster entries with status, party/hero bonds, and inter-NPC relationships"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",

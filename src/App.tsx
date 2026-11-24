@@ -54,6 +54,8 @@ import { HeroPartyTracker } from "./components/HeroPartyTracker";
 import { ChronicleSummarySection } from "./components/ChronicleSummarySection";
 import { CampaignSearchConsole } from "./components/CampaignSearchConsole";
 import { CampaignArchiveModal } from "./components/CampaignArchiveModal";
+import { NpcRosterView } from "./components/NpcRosterView";
+import { buildMergedNpcRoster } from "./services/npcRosterService";
 
 export default function App() {
   // Authentication & Isomorphic engine states
@@ -101,8 +103,9 @@ export default function App() {
   const [sessionDate, setSessionDate] = useState("");
   const [notesSaving, setNotesSaving] = useState(false);
   const [activeNoteTab, setActiveNoteTab] = useState<"dm" | "player">("dm");
-  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"chapters" | "party">("chapters");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"chapters" | "party" | "npcs">("chapters");
   const [selectedHeroId, setSelectedHeroId] = useState<string | null>(null);
+  const [selectedNpcKey, setSelectedNpcKey] = useState<string | null>(null);
   const [isLoreExpanded, setIsLoreExpanded] = useState(false);
   const [sessionSortMode, setSessionSortMode] = useState<"date-desc" | "date-asc" | "name-asc" | "name-desc" | "manual">(() => {
     return (localStorage.getItem("session_sort_mode") as any) || "date-desc";
@@ -222,6 +225,7 @@ export default function App() {
   async function handleSelectCampaign(campId: string) {
     setSelectedCampaignId(campId);
     setSelectedHeroId(null);
+    setSelectedNpcKey(null);
     
     // Filter sessions active for this campaign
     const campSessions = sessions.filter((s) => s.campaignId === campId);
@@ -793,27 +797,27 @@ export default function App() {
       )}
 
       {/* Redesigned Premium Active Campaign Selector Top Bar */}
-      <div className="bg-zinc-900/40 backdrop-blur border-b border-zinc-800 px-4 sm:px-6 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 z-20">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full sm:w-auto">
-          <div className="inline-flex self-start sm:self-auto items-center gap-1.5 px-2.5 py-1 bg-red-500/10 border border-red-500/20 rounded-md text-[10px] font-mono font-extrabold text-red-400 select-none uppercase tracking-widest">
-            <BookOpen className="w-3.5 h-3.5" />
-            Active Realm
+      <div className="bg-zinc-900/40 backdrop-blur border-b border-zinc-800 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3 z-20">
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 w-full lg:w-auto lg:flex-1 min-w-0">
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-red-500/10 border border-red-500/20 rounded-md text-[10px] font-mono font-extrabold text-red-400 select-none uppercase tracking-widest whitespace-nowrap shrink-0">
+            <BookOpen className="w-3.5 h-3.5 shrink-0" />
+            <span>Active Realm</span>
           </div>
           
           {campaignsLoading ? (
-            <div className="flex items-center text-xs text-zinc-500 font-mono py-1">
+            <div className="flex items-center text-xs text-zinc-500 font-mono py-1 whitespace-nowrap">
               <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> Unshrouding realms...
             </div>
           ) : campaigns.length === 0 ? (
-            <div className="text-xs text-zinc-500 italic bg-zinc-950 px-2 py-1 border border-zinc-900 rounded">
+            <div className="text-xs text-zinc-500 italic bg-zinc-950 px-2.5 py-1.5 border border-zinc-900 rounded">
               No active realms. Click "New Realm" to spawn!
             </div>
           ) : (
-            <div className="w-full sm:w-80 min-w-0">
+            <div className="w-full sm:w-72 md:w-80 max-w-full min-w-0">
               <select
                 value={selectedCampaignId}
                 onChange={(e) => handleSelectCampaign(e.target.value)}
-                className="w-full bg-zinc-950 text-red-400 border border-zinc-800 focus:border-red-500 focus:outline-none rounded-lg py-1.5 px-3 text-xs font-sans font-semibold hover:border-zinc-700 transition cursor-pointer truncate shadow-sm"
+                className="w-full min-h-[40px] bg-zinc-950 text-red-400 border border-zinc-800 focus:border-red-500 focus:outline-none rounded-lg py-1.5 px-3 text-xs font-sans font-semibold hover:border-zinc-700 transition cursor-pointer truncate shadow-sm"
                 id="campaign-realm-selector"
               >
                 {campaigns.map((c) => (
@@ -827,12 +831,12 @@ export default function App() {
         </div>
 
         {/* Action Buttons for Campaigns */}
-        <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto min-w-0">
           {(() => {
             const activeCamp = campaigns.find((c) => c.id === selectedCampaignId);
             if (!activeCamp) return null;
             return (
-              <div className="flex items-center gap-2">
+              <>
                 <button
                   onClick={() => {
                     setEditCampaignName(activeCamp.name);
@@ -842,39 +846,38 @@ export default function App() {
                     setEditCampaignDndBeyondNotes(activeCamp.dndBeyondNotes || "");
                     setShowEditCampaignModal(true);
                   }}
-                  className="px-3 py-1.5 bg-zinc-950/80 hover:bg-zinc-900 hover:text-red-400 text-zinc-400 border border-zinc-850 hover:border-zinc-700 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                  className="min-h-[40px] px-3 py-2 bg-zinc-950/80 hover:bg-zinc-900 hover:text-red-400 text-zinc-300 border border-zinc-850 hover:border-zinc-700 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
                   title="Edit Campaign Details"
                   id="btn-sidebar-edit-campaign"
                 >
-                  <Edit className="w-3.5 h-3.5 text-zinc-550" />
-                  <span className="hidden md:inline">Edit Realm</span>
+                  <Edit className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                  <span>Edit Realm</span>
                 </button>
                 <button
                   onClick={() => {
                     setCampaignArchiveModalTab("export");
                     setShowCampaignArchiveModal(true);
                   }}
-                  className="px-3 py-1.5 bg-zinc-950/80 hover:bg-zinc-900 hover:text-red-400 text-zinc-400 border border-zinc-850 hover:border-zinc-700 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                  className="min-h-[40px] px-3 py-2 bg-zinc-950/80 hover:bg-zinc-900 hover:text-red-400 text-zinc-300 border border-zinc-850 hover:border-zinc-700 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
                   title="Export Entire Campaign Data (JSON) for offline archival"
                   id="btn-sidebar-archive-export"
                 >
-                  <Archive className="w-3.5 h-3.5 text-red-400" />
-                  <span className="hidden md:inline">Archive &amp; Export</span>
+                  <Archive className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                  <span>Archive &amp; Export</span>
                 </button>
                 <button
                   onClick={() => handleDeleteCampaign(activeCamp.id)}
-                  className="px-3 py-1.5 bg-zinc-950/80 hover:bg-red-955/20 hover:text-red-400 text-zinc-400 border border-zinc-850 hover:border-red-900/30 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                  className="min-h-[40px] px-3 py-2 bg-zinc-950/80 hover:bg-red-955/20 hover:text-red-400 text-zinc-300 border border-zinc-850 hover:border-red-900/30 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
                   title="Delete Campaign Realm"
                   id="btn-sidebar-delete-campaign"
                 >
-                  <Trash2 className="w-3.5 h-3.5 text-zinc-550" />
-                  <span className="hidden md:inline">Delete</span>
+                  <Trash2 className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                  <span>Delete</span>
                 </button>
-              </div>
+                <div className="h-5 w-[1px] bg-zinc-800 mx-0.5 hidden sm:block" />
+              </>
             );
           })()}
-
-          <div className="h-5 w-[1px] bg-zinc-800 mx-1.5 hidden sm:block" />
 
           {/* Import Realm Button */}
           <button
@@ -882,21 +885,21 @@ export default function App() {
               setCampaignArchiveModalTab("import");
               setShowCampaignArchiveModal(true);
             }}
-            className="px-3 py-1.5 bg-zinc-950/80 hover:bg-zinc-900 hover:text-amber-400 text-zinc-400 border border-zinc-850 hover:border-zinc-700 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+            className="min-h-[40px] px-3 py-2 bg-zinc-950/80 hover:bg-zinc-900 hover:text-amber-400 text-zinc-300 border border-zinc-850 hover:border-zinc-700 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
             title="Import Campaign scrolls from JSON backup"
             id="btn-sidebar-import-archive"
           >
-            <Upload className="w-3.5 h-3.5 text-amber-400" />
-            <span className="hidden sm:inline">Import Realm</span>
+            <Upload className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span>Import Realm</span>
           </button>
 
           <button
             onClick={() => setShowCreateCampaignModal(true)}
-            className="px-3.5 py-1.5 bg-red-500/15 hover:bg-red-500 text-red-400 hover:text-zinc-950 rounded-lg text-xs font-bold shadow-md transition flex items-center gap-1.5 cursor-pointer border border-red-500/30"
+            className="min-h-[40px] px-3.5 py-2 bg-red-500/15 hover:bg-red-500 text-red-400 hover:text-zinc-950 rounded-lg text-xs font-bold shadow-md transition flex items-center gap-1.5 cursor-pointer border border-red-500/30 whitespace-nowrap shrink-0"
             id="btn-sidebar-plus-campaign"
             title="Create New Campaign World"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-3.5 h-3.5 shrink-0" />
             <span>New Realm</span>
           </button>
         </div>
@@ -1290,6 +1293,76 @@ export default function App() {
               </div>
             </div>
           )}
+          {activeWorkspaceTab === "npcs" && (
+            <div className="flex-1 flex flex-col min-h-0">
+              <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-905/10">
+                <div className="flex items-center gap-1.5">
+                  <User className="w-4 h-4 text-amber-400" />
+                  <span className="text-xs uppercase font-fantasy tracking-wider font-semibold text-zinc-300">
+                    NPC ROSTER SUMMARY
+                  </span>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5 max-h-[300px] lg:max-h-none">
+                {(() => {
+                  const activeCamp = campaigns.find((c) => c.id === selectedCampaignId);
+                  const activeCampSessions = sessions.filter((s) => s.campaignId === selectedCampaignId);
+                  const mergedNpcs = buildMergedNpcRoster(activeCamp, activeCampSessions);
+                  if (mergedNpcs.length === 0) {
+                    return (
+                      <div className="p-4 text-center text-xs text-zinc-500 italic font-sans leading-normal">
+                        No NPCs recorded in previous sessions yet.
+                      </div>
+                    );
+                  }
+                  const activeSidebarNpcKey =
+                    selectedNpcKey && mergedNpcs.some((n) => n.key === selectedNpcKey)
+                      ? selectedNpcKey
+                      : mergedNpcs[0]?.key ?? null;
+
+                  return mergedNpcs.map((npc) => {
+                    const isSelected = activeSidebarNpcKey === npc.key;
+                    return (
+                      <button
+                        type="button"
+                        key={npc.key}
+                        onClick={() => {
+                          setSelectedNpcKey(npc.key);
+                          requestAnimationFrame(() => {
+                            document
+                              .getElementById("npc-detail-dossier")
+                              ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                          });
+                        }}
+                        className={`group w-full p-3 text-left rounded border transition flex items-center justify-between cursor-pointer ${
+                          isSelected
+                            ? "bg-red-500/10 border-red-500/40 text-red-400 parchment-glow"
+                            : "bg-zinc-900/40 border-zinc-850 hover:bg-zinc-900 hover:border-zinc-700 text-zinc-300"
+                        }`}
+                        id={`side-npc-${npc.key.replace(/[^a-z0-9]/g, "-")}`}
+                        title={`View ${npc.name} status & relationships`}
+                      >
+                        <div className="min-w-0 pr-2 flex-1">
+                          <h4 className={`font-fantasy font-bold text-xs truncate ${isSelected ? "text-red-300" : "text-zinc-200"}`}>
+                            {npc.name}
+                          </h4>
+                          <p className="text-[10px] text-zinc-550 font-mono truncate">
+                            {npc.role} · {npc.campaignStatus}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="font-mono tabular-nums text-[10px] text-zinc-400">
+                            {npc.appearances.length}ch
+                          </span>
+                          <ChevronRight className={`w-3.5 h-3.5 transition ${isSelected ? "text-red-400" : "text-zinc-600 group-hover:text-red-500"}`} />
+                        </div>
+                      </button>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+          )}
         </aside>
 
         {/* Right column main detail panels scroll container */}
@@ -1347,6 +1420,18 @@ export default function App() {
                 <Users className="w-3.5 h-3.5" /> 🛡️ Heroes of the Realm
               </button>
 
+              <button
+                onClick={() => setActiveWorkspaceTab("npcs")}
+                className={`px-4 py-2.5 border-b-2 font-fantasy tracking-wider uppercase text-xs transition duration-150 flex items-center gap-2 cursor-pointer font-bold whitespace-nowrap shrink-0 ${
+                  activeWorkspaceTab === "npcs"
+                    ? "border-red-500 text-red-500 font-bold bg-zinc-900/40"
+                    : "border-transparent text-zinc-550 hover:text-zinc-300"
+                }`}
+                id="tab-workspace-npc-roster"
+              >
+                <User className="w-3.5 h-3.5" /> NPC Roster
+              </button>
+
             </div>
           )}
 
@@ -1361,6 +1446,47 @@ export default function App() {
                   setCampaigns((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
                 } catch (e) {
                   console.error("Failed to update campaign heroes:", e);
+                }
+              }}
+            />
+
+          ) : selectedCampaignId && activeWorkspaceTab === "npcs" ? (
+            <NpcRosterView
+              campaign={campaigns.find((c) => c.id === selectedCampaignId)!}
+              campaignSessions={sessions.filter((s) => s.campaignId === selectedCampaignId)}
+              activeSessionId={selectedSession?.id ?? null}
+              selectedNpcKey={selectedNpcKey}
+              onSelectNpc={setSelectedNpcKey}
+              onUpdateCampaign={async (updated) => {
+                try {
+                  await updateExistingCampaign(updated);
+                  setCampaigns((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+                } catch (e) {
+                  console.error("Failed to update campaign NPC roster:", e);
+                }
+              }}
+              onUpdateSession={async (updatedSess) => {
+                try {
+                  await updateExistingSession(updatedSess);
+                  setSessions((prev) =>
+                    prev.map((s) => (s.id === updatedSess.id ? updatedSess : s))
+                  );
+                  if (selectedSession?.id === updatedSess.id) {
+                    setSelectedSession(updatedSess);
+                  }
+                } catch (e) {
+                  console.error("Failed to sync merged NPC into session chapter:", e);
+                }
+              }}
+              onOpenSession={(sessionId) => {
+                const match = sessions.find((s) => s.id === sessionId);
+                if (match) {
+                  setSelectedSession(match);
+                  setSessionTitle(match.title);
+                  setSessionDate(match.date);
+                  setNotes(match.notes);
+                  setPlayerNotes(match.playerNotes || "");
+                  setActiveWorkspaceTab("chapters");
                 }
               }}
             />

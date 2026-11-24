@@ -51,7 +51,7 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && isValidCampaign(incoming())
         && (
-          incoming().diff(resource.data).affectedKeys().hasAny(['name', 'setting', 'description', 'updatedAt', 'heroes', 'players'])
+          incoming().diff(resource.data).affectedKeys().hasAny(['name', 'setting', 'description', 'updatedAt', 'heroes', 'players', 'npcRoster'])
         );
         
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
